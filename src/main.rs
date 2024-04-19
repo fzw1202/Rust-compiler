@@ -1,9 +1,11 @@
 use lalrpop_util::lalrpop_mod;
 use std::env::args;
 use std::fs::read_to_string;
+// use std::fs::File;
 use std::io::Result;
 
-use std::fs::File;
+mod asm;
+use asm::GenerateAsm;
 
 mod ast;
 
@@ -12,7 +14,7 @@ lalrpop_mod!(sysy);
 fn main() -> Result<()> {
     let mut args = args();
     args.next();
-    let _mode = args.next().unwrap();
+    let mode = args.next().unwrap();
 
     let input = args.next().unwrap();
     let input = read_to_string(input)?;
@@ -20,10 +22,20 @@ fn main() -> Result<()> {
 
     args.next();
     let output = args.next().unwrap();
-    let mut file = File::create(output)?;
+    let mut s = String::from("");
+    ast.dump(&mut s)?;
 
-    // println!("{:#?}", ast);
+    if mode == "-koopa" {
+        println!("koopa");
+        std::fs::write(output, &s)?;
+    } else if mode == "-riscv" {
+        println!("riscv");
+        let driver = koopa::front::Driver::from(s);
+        let program = driver.generate_program().unwrap();
 
-    ast.dump(&mut file)?;
+        let mut asm = String::from("");
+        program.generate(&mut asm);
+        std::fs::write(output, &asm)?;
+    }
     Ok(())
 }

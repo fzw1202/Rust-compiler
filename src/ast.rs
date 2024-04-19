@@ -1,5 +1,4 @@
-use std::fs::File;
-use std::io::{self, Write};
+use std::io::{self};
 
 #[derive(Debug)]
 pub struct CompUnit {
@@ -7,8 +6,8 @@ pub struct CompUnit {
 }
 
 impl CompUnit {
-    pub fn dump(&self, file: &mut File) -> io::Result<()> {
-        self.func_def.dump(file)?;
+    pub fn dump(&self, s: &mut String) -> io::Result<()> {
+        self.func_def.dump(s)?;
         Ok(())
     }
 }
@@ -21,10 +20,10 @@ pub struct FuncDef {
 }
 
 impl FuncDef {
-    fn dump(&self, file: &mut File) -> io::Result<()> {
-        writeln!(file, "fun @{}(): {} {{", self.ident, self.func_type.dump())?;
-        self.block.dump(file)?;
-        writeln!(file, "}}")?;
+    fn dump(&self, s: &mut String) -> io::Result<()> {
+        s.push_str(&format!("fun @{}(): {} {{\n", self.ident, self.func_type.dump()));
+        self.block.dump(s)?;
+        s.push_str("}\n");
         Ok(())
     }
 }
@@ -48,9 +47,9 @@ pub struct Block {
 }
 
 impl Block {
-    fn dump(&self, file: &mut File) -> io::Result<()> {
-        writeln!(file, "%entry:")?;
-        self.stmt.dump(file)?;
+    fn dump(&self, s: &mut String) -> io::Result<()> {
+        s.push_str("%entry:\n");
+        self.stmt.dump(s)?;
         Ok(())
     }
 }
@@ -61,8 +60,8 @@ pub struct Stmt {
 }
 
 impl Stmt {
-    fn dump(&self, file: &mut File) -> io::Result<()> {
-        writeln!(file, "  ret {}", self.num)?;
+    fn dump(&self, s: &mut String) -> io::Result<()> {
+        s.push_str(&format!("  ret {}\n", self.num));
         Ok(())
     }
 }
