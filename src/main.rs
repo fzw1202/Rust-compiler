@@ -34,7 +34,7 @@ fn main() -> Result<()> {
         let program = driver.generate_program().unwrap();
 
         let mut asm = String::from("");
-        program.generate(&mut asm);
+        program.generate(&mut asm, None);
         std::fs::write(output, &asm)?;
     }
     Ok(())
