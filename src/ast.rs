@@ -161,9 +161,9 @@ impl MulExp {
                 unsafe {
                     CNT += 1;
                     match mop {
-                        MulOp::Div => s.push_str(&format!("  %{} = div %{}, %{}", CNT, a, b)),
-                        MulOp::Mod => s.push_str(&format!("  %{} = mod %{}, %{}", CNT, a, b)),
-                        MulOp::Mul => s.push_str(&format!("  %{} = mul %{}, %{}", CNT, a, b)),
+                        MulOp::Div => s.push_str(&format!("  %{} = div %{}, %{}\n", CNT, a, b)),
+                        MulOp::Mod => s.push_str(&format!("  %{} = mod %{}, %{}\n", CNT, a, b)),
+                        MulOp::Mul => s.push_str(&format!("  %{} = mul %{}, %{}\n", CNT, a, b)),
                     };
                     return CNT;
                 }
@@ -187,8 +187,8 @@ impl AddExp {
                 unsafe { 
                     CNT += 1; 
                     match aop {
-                        AddOp::Add => s.push_str(&format!("  %{} = add %{}, %{}", CNT, a, b)),
-                        AddOp::Sub => s.push_str(&format!("  %{} = sub %{}, %{}", CNT, a, b)),
+                        AddOp::Add => s.push_str(&format!("  %{} = add %{}, %{}\n", CNT, a, b)),
+                        AddOp::Sub => s.push_str(&format!("  %{} = sub %{}, %{}\n", CNT, a, b)),
                     };
                     return CNT;
                 }
@@ -219,10 +219,10 @@ impl RelExp {
                 unsafe {
                     CNT += 1;
                     match rop {
-                        RelOp::Less => s.push_str(&format!("  %{} = lt %{}, %{}", CNT, a, b)),
-                        RelOp::Greater => s.push_str(&format!("  %{} = gt %{}, %{}", CNT, a, b)),
-                        RelOp::LessEq => s.push_str(&format!("  %{} = le %{}, %{}", CNT, a, b)),
-                        RelOp::GreaterEq => s.push_str(&format!("  %{} = ge %{}, %{}", CNT, a, b)),
+                        RelOp::Less => s.push_str(&format!("  %{} = lt %{}, %{}\n", CNT, a, b)),
+                        RelOp::Greater => s.push_str(&format!("  %{} = gt %{}, %{}\n", CNT, a, b)),
+                        RelOp::LessEq => s.push_str(&format!("  %{} = le %{}, %{}\n", CNT, a, b)),
+                        RelOp::GreaterEq => s.push_str(&format!("  %{} = ge %{}, %{}\n", CNT, a, b)),
                     };
                     return CNT;
                 }
@@ -251,8 +251,8 @@ impl EqExp {
                 unsafe {
                     CNT += 1;
                     match eop {
-                        EqOp::Eq => s.push_str(&format!("  %{} = eq %{}, %{}", CNT, a, b)),
-                        EqOp::Neq => s.push_str(&format!("  %{} = ne %{}, %{}", CNT, a, b)),
+                        EqOp::Eq => s.push_str(&format!("  %{} = eq %{}, %{}\n", CNT, a, b)),
+                        EqOp::Neq => s.push_str(&format!("  %{} = ne %{}, %{}\n", CNT, a, b)),
                     }
                     return CNT;
                 }
@@ -274,10 +274,10 @@ impl LAndExp {
                 let a: i32 = laexp.dump(s);
                 let b: i32 = eexp.dump(s);
                 unsafe {
-                    s.push_str(&format!("  %{} = eq %{}, 0", CNT + 1, a));
-                    s.push_str(&format!("  %{} = eq %{}, 0", CNT + 2, b));
-                    s.push_str(&format!("  %{} = or %{}, %{}", CNT + 3, CNT + 1, CNT + 2));
-                    s.push_str(&format!("  %{} = eq 0, %{}", CNT + 4, CNT + 3));
+                    s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 1, a));
+                    s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 2, b));
+                    s.push_str(&format!("  %{} = or %{}, %{}\n", CNT + 3, CNT + 1, CNT + 2));
+                    s.push_str(&format!("  %{} = eq 0, %{}\n", CNT + 4, CNT + 3));
                     CNT += 4;
                     return CNT;
                 }
@@ -299,9 +299,9 @@ impl LOrExp {
                 let a: i32 = loexp.dump(s);
                 let b: i32 = laexp.dump(s);
                 unsafe {
-                    s.push_str(&format!("  %{} = ne %{}, 0", CNT + 1, a));
-                    s.push_str(&format!("  %{} = ne %{}, 0", CNT + 2, b));
-                    s.push_str(&format!("  %{} = or %{}, %{}", CNT + 3, CNT + 1, CNT + 2));
+                    s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 1, a));
+                    s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 2, b));
+                    s.push_str(&format!("  %{} = or %{}, %{}\n", CNT + 3, CNT + 1, CNT + 2));
                     CNT += 3;
                     return CNT;
                 }
