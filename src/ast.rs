@@ -277,7 +277,7 @@ impl LAndExp {
                     s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 1, a));
                     s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 2, b));
                     s.push_str(&format!("  %{} = or %{}, %{}\n", CNT + 3, CNT + 1, CNT + 2));
-                    s.push_str(&format!("  %{} = eq 0, %{}\n", CNT + 4, CNT + 3));
+                    s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 4, CNT + 3));
                     CNT += 4;
                     return CNT;
                 }

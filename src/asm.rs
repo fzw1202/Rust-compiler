@@ -78,7 +78,9 @@ impl GenerateAsm for koopa::ir::entities::Value {
                         if int.value() == 0 {
                             "x0".to_string()
                         } else {
-                            let reg = REG_NAME[REG.pop_front().unwrap()];
+                            regl = REG.pop_front().unwrap();
+                            let reg = REG_NAME[regl];
+                            regl += REG_NAME.len();
                             s.push_str(&format!("  li {}, {}\n", reg, int.value()));
                             reg.to_string()
                         }
@@ -142,8 +144,14 @@ impl GenerateAsm for koopa::ir::entities::Value {
                             REG_RECORD.insert(*self, reg);
                         }
                         BinaryOp::Sub => {
-                            s.push_str(&format!("  sub {}, {}, {}\n", REG_NAME[reg], l, r));
-                            REG_RECORD.insert(*self, reg);
+                            if r == "x0" && l != "x0" {
+                                REG.push_front(reg);
+                                println!("l: {}", l);
+                                REG_RECORD.insert(*self, regl % REG_NAME.len());
+                            } else {
+                                s.push_str(&format!("  sub {}, {}, {}\n", REG_NAME[reg], l, r));
+                                REG_RECORD.insert(*self, reg);
+                            }
                         }
                         BinaryOp::Mul => {
                             s.push_str(&format!("  mul {}, {}, {}\n", REG_NAME[reg], l, r));
@@ -169,11 +177,13 @@ impl GenerateAsm for koopa::ir::entities::Value {
                     }
 
                     if regl < REG_NAME.len() {
+                        println!("back {}", regl);
                         REG.push_back(regl);
                         REG_RECORD.remove(&bin.lhs());
                     }
 
                     if regr < REG_NAME.len() {
+                        println!("back {}", regr);
                         REG.push_back(regr);
                         REG_RECORD.remove(&bin.rhs());
                     }
