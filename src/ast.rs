@@ -78,6 +78,15 @@ impl Block {
         s.push_str("%entry:\n");
         for bitem in &self.bitems {
             bitem.dump(s)?;
+            match bitem {
+                BlockItem::Stm(stmt) => {
+                    match stmt {
+                        Stmt::Ret(_exp) => break,
+                        _ => (),
+                    }
+                }
+                _ => (),
+            }
         }
         Ok(())
     }
