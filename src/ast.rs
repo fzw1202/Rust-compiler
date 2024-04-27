@@ -383,7 +383,7 @@ impl UnaryExp {
                 match uop {
                     UnaryOp::Pos => a,
                     UnaryOp::Neg => -a,
-                    UnaryOp::Not => (a != 0) as i32,
+                    UnaryOp::Not => (a == 0) as i32,
                 }
             }
         }
