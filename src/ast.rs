@@ -79,12 +79,10 @@ impl Block {
         for bitem in &self.bitems {
             bitem.dump(s)?;
             match bitem {
-                BlockItem::Stm(stmt) => {
-                    match stmt {
-                        Stmt::Ret(_exp) => break,
-                        _ => (),
-                    }
-                }
+                BlockItem::Stm(stmt) => match stmt {
+                    Stmt::Ret(_exp) => break,
+                    _ => (),
+                },
                 _ => (),
             }
         }
@@ -213,10 +211,12 @@ impl VarDef {
     fn symbol(&self) -> io::Result<()> {
         match self {
             VarDef::Def(name) => unsafe {
-                SYMBOLS.insert(name.to_string(), Symbol::Var(format!("@{}", name)));
+                let symbol = if name == "main" { "0" } else { "name" };
+                SYMBOLS.insert(name.to_string(), Symbol::Var(format!("@{}", symbol)));
             },
             VarDef::Ass(name, _initval) => unsafe {
-                SYMBOLS.insert(name.to_string(), Symbol::Var(format!("@{}", name)));
+                let symbol = if name == "main" { "0" } else { "name" };
+                SYMBOLS.insert(name.to_string(), Symbol::Var(format!("@{}", symbol)));
             },
         };
         Ok(())
