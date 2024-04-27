@@ -75,16 +75,25 @@ impl Block {
     }
 
     fn dump(&self, s: &mut String) -> io::Result<()> {
+        let mut cnt: i32 = 0;
+
         s.push_str("%entry:\n");
         for bitem in &self.bitems {
             bitem.dump(s)?;
             match bitem {
                 BlockItem::Stm(stmt) => match stmt {
-                    Stmt::Ret(_exp) => break,
+                    Stmt::Ret(_exp) => {
+                        cnt += 1;
+                        break
+                    },
                     _ => (),
                 },
                 _ => (),
             }
+        }
+
+        if cnt == 0 {
+            s.push_str(&format!("  ret 0\n"));
         }
         Ok(())
     }
