@@ -3,42 +3,87 @@ use crate::ast::*;
 grammar;
 
 match {
-  r"\s*" => {},
-  r"//[^\n\r]*[\n\r]*" => {},
-  r"(?s)/\*([^*]|\*+[^*/])*\*+/" => {},
-  _
+  	r"\s*" => {},
+	r"//[^\n\r]*[\n\r]*" => {},
+  	r"(?s)/\*([^*]|\*+[^*/])*\*+/" => {},
+  	_
 }
 
 pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit {<>};
 
 FuncDef: FuncDef = {
-  <func_type: FuncType> <ident: Ident> "(" ")" <block: Block> => FuncDef {<>}
+    <func_type: FuncType> <ident: Ident> "(" ")" <block: Block> => FuncDef {<>}
 }
 
 FuncType: FuncType = "int" => FuncType::Int;
 
-Block: Block = "{" <stmt: Stmt> "}" => Block {<>};
+Block: Block = "{" <bitems: (<BlockItem>)*> "}" => Block {<>};
 
-Stmt: Stmt = "return" <exp: Exp> ";" => Stmt {<>};
+BlockItem: BlockItem = {
+    Decl => BlockItem::Dec(<>),
+    Stmt => BlockItem::Stm(<>),
+}
+
+Decl: Decl = {
+    <cdecl: ConstDecl> => Decl::Const(<>),
+    <vdecl: VarDecl> => Decl::Var(<>),   
+}
+
+ConstDecl: ConstDecl = {
+    "const" <btype: BType> <cdef: ConstDef> <mut cdefs: ("," <ConstDef>)*> ";" => {
+        cdefs.insert(0, cdef);
+        ConstDecl { btype, cdefs }
+    },
+}
+
+VarDecl: VarDecl = {
+    <btype: BType> <vdef: VarDef> <mut vdefs: ("," <VarDef>)*> ";" => {
+        vdefs.insert(0, vdef);
+        VarDecl { btype, vdefs }
+    },
+}
+
+BType: BType = "int" => BType::INT;
+
+ConstDef: ConstDef = <ident: Ident> "=" <cinitval: ConstInitVal> => ConstDef {<>};
+
+VarDef: VarDef = {
+    <ident: Ident> => VarDef::Def(<>),
+    <ident: Ident> "=" <initval: InitVal> => VarDef::Ass(<>),
+}
+
+ConstInitVal: ConstInitVal = <cexp: ConstExp> => ConstInitVal {<>};
+
+InitVal: InitVal = <exp: Exp> => InitVal {<>};
+
+Stmt: Stmt = { 
+    <lval: LVal> "=" <exp: Exp> ";" => Stmt::Ass(<>),
+    "return" <exp: Exp> ";" => Stmt::Ret(<>),
+}
+
+ConstExp: ConstExp = <exp: Exp> => ConstExp {<>};
 
 Exp: Exp = <loexp: LOrExp> => Exp {<>};
 
+LVal: LVal = <ident: Ident> => LVal {<>};
+
 PrimaryExp: PrimaryExp = {
-  "(" <Exp> ")" => PrimaryExp::Exp(Box::new(<>)),
-  Number => PrimaryExp::Number(<>),
+  	"(" <Exp> ")" => PrimaryExp::Exp(Box::new(<>)),
+  	Number => PrimaryExp::Number(<>),
+  	<lval: LVal> => PrimaryExp::LVal(Box::new(lval)),
 }
 
 Number: i32 = <num: IntConst> => <>;
 
 UnaryExp: UnaryExp = {
-  PrimaryExp => UnaryExp::Primary(<>),
-  <op: UnaryOp> <exp: UnaryExp> => UnaryExp::Unary(op, Box::new(exp)),
+  	PrimaryExp => UnaryExp::Primary(<>),
+  	<op: UnaryOp> <exp: UnaryExp> => UnaryExp::Unary(op, Box::new(exp)),
 }
 
 UnaryOp: UnaryOp = {
-  "+" => UnaryOp::Pos,
-  "-" => UnaryOp::Neg,
-  "!" => UnaryOp::Not,
+  	"+" => UnaryOp::Pos,
+  	"-" => UnaryOp::Neg,
+  	"!" => UnaryOp::Not,
 }
 
 MulOp: MulOp = {
@@ -97,7 +142,7 @@ LOrExp: LOrExp = {
 Ident: String = r"[_a-zA-Z][_a-zA-Z0-9]*" => <>.to_string();
 
 IntConst: i32 = {
-  r"[1-9][0-9]*" => i32::from_str_radix(<>, 10).unwrap(),
-  r"0[0-7]*" => i32::from_str_radix(<>, 8).unwrap(),
-  r"0[xX][0-9a-fA-F]+" => i32::from_str_radix(&<>[2..], 16).unwrap(),
+  	r"[1-9][0-9]*" => i32::from_str_radix(<>, 10).unwrap(),
+  	r"0[0-7]*" => i32::from_str_radix(<>, 8).unwrap(),
+  	r"0[xX][0-9a-fA-F]+" => i32::from_str_radix(&<>[2..], 16).unwrap(),
 }

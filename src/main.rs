@@ -23,6 +23,7 @@ fn main() -> Result<()> {
     args.next();
     let output = args.next().unwrap();
     let mut s = String::from("");
+    ast.symbol()?;
     ast.dump(&mut s)?;
 
     if mode == "-koopa" {
