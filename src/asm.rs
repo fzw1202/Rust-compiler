@@ -91,7 +91,7 @@ impl GenerateAsm for Value {
                     s.push_str(&format!("  add sp, sp, t0\n"));
         
                 } else {
-                    s.push_str(&format!("  addi sp, sp, -{}\n", frame.unwrap().size));
+                    s.push_str(&format!("  addi sp, sp, {}\n", frame.unwrap().size));
                 }
                 s.push_str("  ret\n");
                 s
