@@ -161,10 +161,12 @@ impl GenerateAsm for Value {
                     BinaryOp::NotEq => {
                         s.push_str(&format!("  xor t0, {}, {}\n", l, r));
                         s.push_str(&format!("  snez t0, t0\n"));
+                        s.push_str(&format!("  sw t0, {}(sp)\n", offset));
                     }
                     BinaryOp::Eq => {
                         s.push_str(&format!("  xor t0, {}, {}\n", l, r));
                         s.push_str(&format!("  seqz t0, t0\n"));
+                        s.push_str(&format!("  sw t0, {}(sp)\n", offset));
                     }
                     BinaryOp::Gt => {
                         s.push_str(&format!("  sgt t0, {}, {}\n", l, r));
@@ -177,10 +179,12 @@ impl GenerateAsm for Value {
                     BinaryOp::Ge => {
                         s.push_str(&format!("  slt t0, {}, {}\n", l, r));
                         s.push_str(&format!("  seqz t0, t0\n"));
+                        s.push_str(&format!("  sw t0, {}(sp)\n", offset));
                     }
                     BinaryOp::Le => {
                         s.push_str(&format!("  sgt t0, {}, {}\n", l, r));
                         s.push_str(&format!("  seqz t0, t0\n"));
+                        s.push_str(&format!("  sw t0, {}(sp)\n", offset));
                     }
                     BinaryOp::Add => {
                         s.push_str(&format!("  add t0, {}, {}\n", l, r));
