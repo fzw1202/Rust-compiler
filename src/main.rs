@@ -31,10 +31,9 @@ fn main() -> Result<()> {
         std::fs::write(output, &s)?;
     } else if mode == "-riscv" {
         println!("riscv");
-        asm::init();
         let driver = koopa::front::Driver::from(s);
         let program = driver.generate_program().unwrap();
-        std::fs::write(output, program.generate(None))?;
+        std::fs::write(output, program.generate(None, None))?;
     }
     Ok(())
 }
