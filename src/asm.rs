@@ -187,10 +187,12 @@ impl GenerateAsm for Value {
                         s.push_str(&format!("  sw t0, {}(sp)\n", offset));
                     }
                     BinaryOp::Sub => {
-                        if r != "x0" {
+                        if l == "x0" && r == "x0" {
+                            s.push_str(&format!("  sw x0, {}(sp)\n", offset));
+                        } else {
                             s.push_str(&format!("  sub t0, {}, {}\n", l, r));
+                            s.push_str(&format!("  sw t0, {}(sp)\n", offset));
                         }
-                        s.push_str(&format!("  sw t0, {}(sp)\n", offset));
                     }
                     BinaryOp::Mul => {
                         s.push_str(&format!("  mul t0, {}, {}\n", l, r));
