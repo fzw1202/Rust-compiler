@@ -57,7 +57,14 @@ impl GenerateAsm for koopa::ir::FunctionData {
             frame.size
         };
 
-        s.push_str(&format!("  addi sp, sp, -{}\n", frame.size));
+        if frame.size > 2048 {
+            s.push_str(&format!("  li t0, {}\n", -frame.size));
+            s.push_str(&format!("  add sp, sp, t0\n"));
+
+        } else {
+            s.push_str(&format!("  addi sp, sp, -{}\n", frame.size));
+        }
+
         for (&_bb, node) in self.layout().bbs() {
             for &inst in node.insts().keys() {
                 s.push_str(&inst.generate(Some(self), Some(&frame)));
@@ -79,7 +86,13 @@ impl GenerateAsm for Value {
                     "  lw a0, {}(sp)\n",
                     frame.unwrap().pos.get(&ret.value().unwrap()).unwrap()
                 ));
-                s.push_str(&format!("  addi sp, sp, {}\n", frame.unwrap().size));
+                if frame.unwrap().size > 2047 {
+                    s.push_str(&format!("  li t0, {}\n", frame.unwrap().size));
+                    s.push_str(&format!("  add sp, sp, t0\n"));
+        
+                } else {
+                    s.push_str(&format!("  addi sp, sp, -{}\n", frame.unwrap().size));
+                }
                 s.push_str("  ret\n");
                 s
             }
