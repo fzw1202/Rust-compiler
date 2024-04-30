@@ -140,7 +140,7 @@ impl Decl {
         match self {
             Decl::Const(_cdecl) => (),
             Decl::Var(vdecl) => vdecl.dump(s)?,
-        }
+        };
         Ok(())
     }
 }
@@ -176,7 +176,7 @@ impl VarDecl {
                     vdef.symbol()?;
                 }
             }
-        }
+        };
         Ok(())
     }
 
@@ -187,7 +187,7 @@ impl VarDecl {
                     vdef.dump(s, &"i32".to_string())?;
                 }
             }
-        }
+        };
         Ok(())
     }
 }
@@ -242,9 +242,16 @@ impl VarDef {
                 let varname = SYMBOLS.get(name).unwrap();
                 match varname {
                     Symbol::Var(n) => {
-                        let a = initval.dump(s);
+                        let result = initval.dump(s);
                         s.push_str(&format!("  {} = alloc {}\n", &n, t));
-                        s.push_str(&format!("  store %{}, {}\n", a, &n));
+                        match result {
+                            Ok(cnt) => {
+                                s.push_str(&format!("  store %{}, {}\n", cnt, &n));
+                            }
+                            Err(value) => {
+                                s.push_str(&format!("  store {}, {}\n", value, &n));
+                            }
+                        };
                     }
                     _ => (),
                 };
@@ -269,7 +276,7 @@ pub struct InitVal {
 }
 
 impl InitVal {
-    fn dump(&self, s: &mut String) -> i32 {
+    fn dump(&self, s: &mut String) -> Result<i32, i32> {
         self.exp.dump(s)
     }
 }
@@ -302,15 +309,23 @@ impl Stmt {
     fn dump(&self, s: &mut String) -> io::Result<()> {
         match self {
             Stmt::Ass(lval, exp) => match lval.get_value() {
-                Symbol::Const(_value) => panic!("assignment for const value is not allowed!"),
+                Symbol::Const(_value) => {
+                    panic!("assignment for const value is not allowed!")
+                }
                 Symbol::Var(name) => {
-                    let a = exp.dump(s);
-                    s.push_str(&format!("  store %{}, {}\n", a, name));
+                    let result = exp.dump(s);
+                    match result {
+                        Ok(cnt) => s.push_str(&format!("  store %{}, {}\n", cnt, name)),
+                        Err(value) => s.push_str(&format!("  store {}, {}\n", value, name)),
+                    }
                 }
             },
             Stmt::Ret(exp) => {
-                let a = exp.dump(s);
-                s.push_str(&format!("  ret %{}\n", a));
+                let result = exp.dump(s);
+                match result {
+                    Ok(cnt) => s.push_str(&format!("  ret %{}\n", cnt)),
+                    Err(value) => s.push_str(&format!("  ret {}\n", value)),
+                }
             }
         };
         Ok(())
@@ -326,7 +341,7 @@ impl Exp {
         self.loexp.symbol()
     }
 
-    fn dump(&self, s: &mut String) -> i32 {
+    fn dump(&self, s: &mut String) -> Result<i32, i32> {
         self.loexp.dump(s)
     }
 }
@@ -344,26 +359,26 @@ impl PrimaryExp {
             PrimaryExp::Number(ref num) => *num,
             PrimaryExp::LVal(lval) => match lval.get_value() {
                 Symbol::Const(value) => value,
-                Symbol::Var(_name) => panic!("can not use variables to assign const value!"),
+                Symbol::Var(_name) => {
+                    panic!("can not use variables to assign const value!")
+                }
             },
         }
     }
 
-    fn dump(&self, s: &mut String) -> i32 {
+    fn dump(&self, s: &mut String) -> Result<i32, i32> {
         match self {
             PrimaryExp::Exp(exp) => exp.dump(s),
-            PrimaryExp::Number(ref num) => unsafe {
-                CNT += 1;
-                s.push_str(&format!("  %{} = sub {}, 0\n", CNT, num));
-                return CNT;
-            },
+            PrimaryExp::Number(num) => Err(*num),
             PrimaryExp::LVal(lval) => unsafe {
-                CNT += 1;
                 match lval.get_value() {
-                    Symbol::Const(value) => s.push_str(&format!("  %{} = sub {}, 0\n", CNT, value)),
-                    Symbol::Var(name) => s.push_str(&format!("  %{} = load {}\n", CNT, name)),
-                };
-                return CNT;
+                    Symbol::Const(value) => Err(value),
+                    Symbol::Var(name) => {
+                        CNT += 1;
+                        s.push_str(&format!("  %{} = load {}\n", CNT, name));
+                        Ok(CNT)
+                    }
+                }
             },
         }
     }
@@ -389,27 +404,31 @@ impl UnaryExp {
         }
     }
 
-    fn dump(&self, s: &mut String) -> i32 {
+    fn dump(&self, s: &mut String) -> Result<i32, i32> {
         match self {
             UnaryExp::Primary(pexp) => pexp.dump(s),
-            UnaryExp::Unary(uop, uexp) => {
-                let a = uexp.dump(s);
-                unsafe {
-                    match uop {
-                        UnaryOp::Pos => return a,
-                        UnaryOp::Neg => {
-                            CNT += 1;
-                            s.push_str(&format!("  %{} = sub 0, %{}\n", CNT, a));
-                            return CNT;
-                        }
-                        UnaryOp::Not => {
-                            CNT += 1;
-                            s.push_str(&format!("  %{} = eq %{}, 0\n", CNT, a));
-                            return CNT;
-                        }
-                    };
+            UnaryExp::Unary(uop, uexp) => unsafe {
+                let result = uexp.dump(s);
+                match uop {
+                    UnaryOp::Pos => result,
+                    UnaryOp::Neg => {
+                        CNT += 1;
+                        match result {
+                            Ok(cnt) => s.push_str(&format!("  %{} = sub 0, %{}\n", CNT, cnt)),
+                            Err(value) => s.push_str(&format!("  %{} = sub 0, {}\n", CNT, value)),
+                        };
+                        Ok(CNT)
+                    }
+                    UnaryOp::Not => {
+                        CNT += 1;
+                        match result {
+                            Ok(cnt) => s.push_str(&format!("  %{} = eq %{}, 0\n", CNT, cnt)),
+                            Err(value) => s.push_str(&format!("  %{} = eq {}, 0\n", CNT, value)),
+                        };
+                        Ok(CNT)
+                    }
                 }
-            }
+            },
         }
     }
 }
@@ -452,22 +471,90 @@ impl MulExp {
         }
     }
 
-    fn dump(&self, s: &mut String) -> i32 {
+    fn dump(&self, s: &mut String) -> Result<i32, i32> {
         match self {
             MulExp::Unary(uexp) => uexp.dump(s),
-            MulExp::Mul(mexp, mop, uexp) => {
-                let a: i32 = mexp.dump(s);
-                let b: i32 = uexp.dump(s);
-                unsafe {
-                    CNT += 1;
-                    match mop {
-                        MulOp::Div => s.push_str(&format!("  %{} = div %{}, %{}\n", CNT, a, b)),
-                        MulOp::Mod => s.push_str(&format!("  %{} = mod %{}, %{}\n", CNT, a, b)),
-                        MulOp::Mul => s.push_str(&format!("  %{} = mul %{}, %{}\n", CNT, a, b)),
-                    };
-                    return CNT;
-                }
-            }
+            MulExp::Mul(mexp, mop, uexp) => unsafe {
+                let l = mexp.dump(s);
+                let r = uexp.dump(s);
+
+                CNT += 1;
+                match l {
+                    Ok(lcnt) => {
+                        match r {
+                            Ok(rcnt) => {
+                                match mop {
+                                    MulOp::Div => s.push_str(&format!(
+                                        "  %{} = div %{}, %{}\n",
+                                        CNT, lcnt, rcnt
+                                    )),
+                                    MulOp::Mod => s.push_str(&format!(
+                                        "  %{} = mod %{}, %{}\n",
+                                        CNT, lcnt, rcnt
+                                    )),
+                                    MulOp::Mul => s.push_str(&format!(
+                                        "  %{} = mul %{}, %{}\n",
+                                        CNT, lcnt, rcnt
+                                    )),
+                                };
+                            }
+                            Err(rvalue) => {
+                                match mop {
+                                    MulOp::Div => s.push_str(&format!(
+                                        "  %{} = div %{}, {}\n",
+                                        CNT, lcnt, rvalue
+                                    )),
+                                    MulOp::Mod => s.push_str(&format!(
+                                        "  %{} = mod %{}, {}\n",
+                                        CNT, lcnt, rvalue
+                                    )),
+                                    MulOp::Mul => s.push_str(&format!(
+                                        "  %{} = mul %{}, {}\n",
+                                        CNT, lcnt, rvalue
+                                    )),
+                                };
+                            }
+                        };
+                    }
+                    Err(lvalue) => {
+                        match r {
+                            Ok(rcnt) => {
+                                match mop {
+                                    MulOp::Div => s.push_str(&format!(
+                                        "  %{} = div {}, %{}\n",
+                                        CNT, lvalue, rcnt
+                                    )),
+                                    MulOp::Mod => s.push_str(&format!(
+                                        "  %{} = mod {}, %{}\n",
+                                        CNT, lvalue, rcnt
+                                    )),
+                                    MulOp::Mul => s.push_str(&format!(
+                                        "  %{} = mul {}, %{}\n",
+                                        CNT, lvalue, rcnt
+                                    )),
+                                };
+                            }
+                            Err(rvalue) => {
+                                match mop {
+                                    MulOp::Div => s.push_str(&format!(
+                                        "  %{} = div {}, {}\n",
+                                        CNT, lvalue, rvalue
+                                    )),
+                                    MulOp::Mod => s.push_str(&format!(
+                                        "  %{} = mod {}, {}\n",
+                                        CNT, lvalue, rvalue
+                                    )),
+                                    MulOp::Mul => s.push_str(&format!(
+                                        "  %{} = mul {}, {}\n",
+                                        CNT, lvalue, rvalue
+                                    )),
+                                };
+                            }
+                        };
+                    }
+                };
+                Ok(CNT)
+            },
         }
     }
 }
@@ -492,21 +579,74 @@ impl AddExp {
         }
     }
 
-    fn dump(&self, s: &mut String) -> i32 {
+    fn dump(&self, s: &mut String) -> Result<i32, i32> {
         match self {
             AddExp::Mul(mexp) => mexp.dump(s),
-            AddExp::Add(aexp, aop, mexp) => {
-                let a: i32 = aexp.dump(s);
-                let b: i32 = mexp.dump(s);
-                unsafe {
-                    CNT += 1;
-                    match aop {
-                        AddOp::Add => s.push_str(&format!("  %{} = add %{}, %{}\n", CNT, a, b)),
-                        AddOp::Sub => s.push_str(&format!("  %{} = sub %{}, %{}\n", CNT, a, b)),
-                    };
-                    return CNT;
-                }
-            }
+            AddExp::Add(aexp, aop, mexp) => unsafe {
+                let l = aexp.dump(s);
+                let r = mexp.dump(s);
+                CNT += 1;
+
+                match l {
+                    Ok(lcnt) => {
+                        match r {
+                            Ok(rcnt) => {
+                                match aop {
+                                    AddOp::Add => s.push_str(&format!(
+                                        "  %{} = add %{}, %{}\n",
+                                        CNT, lcnt, rcnt
+                                    )),
+                                    AddOp::Sub => s.push_str(&format!(
+                                        "  %{} = sub %{}, %{}\n",
+                                        CNT, lcnt, rcnt
+                                    )),
+                                };
+                            }
+                            Err(rvalue) => {
+                                match aop {
+                                    AddOp::Add => s.push_str(&format!(
+                                        "  %{} = add %{}, {}\n",
+                                        CNT, lcnt, rvalue
+                                    )),
+                                    AddOp::Sub => s.push_str(&format!(
+                                        "  %{} = sub %{}, {}\n",
+                                        CNT, lcnt, rvalue
+                                    )),
+                                };
+                            }
+                        };
+                    }
+                    Err(lvalue) => {
+                        match r {
+                            Ok(rcnt) => {
+                                match aop {
+                                    AddOp::Add => s.push_str(&format!(
+                                        "  %{} = add {}, %{}\n",
+                                        CNT, lvalue, rcnt
+                                    )),
+                                    AddOp::Sub => s.push_str(&format!(
+                                        "  %{} = sub {}, %{}\n",
+                                        CNT, lvalue, rcnt
+                                    )),
+                                };
+                            }
+                            Err(rvalue) => {
+                                match aop {
+                                    AddOp::Add => s.push_str(&format!(
+                                        "  %{} = add {}, {}\n",
+                                        CNT, lvalue, rvalue
+                                    )),
+                                    AddOp::Sub => s.push_str(&format!(
+                                        "  %{} = sub {}, {}\n",
+                                        CNT, lvalue, rvalue
+                                    )),
+                                };
+                            }
+                        };
+                    }
+                };
+                Ok(CNT)
+            },
         }
     }
 }
@@ -540,25 +680,85 @@ impl RelExp {
         }
     }
 
-    fn dump(&self, s: &mut String) -> i32 {
+    fn dump(&self, s: &mut String) -> Result<i32, i32> {
         match self {
             RelExp::Add(aexp) => aexp.dump(s),
-            RelExp::Rel(rexp, rop, aexp) => {
-                let a: i32 = rexp.dump(s);
-                let b: i32 = aexp.dump(s);
-                unsafe {
-                    CNT += 1;
-                    match rop {
-                        RelOp::Less => s.push_str(&format!("  %{} = lt %{}, %{}\n", CNT, a, b)),
-                        RelOp::Greater => s.push_str(&format!("  %{} = gt %{}, %{}\n", CNT, a, b)),
-                        RelOp::LessEq => s.push_str(&format!("  %{} = le %{}, %{}\n", CNT, a, b)),
-                        RelOp::GreaterEq => {
-                            s.push_str(&format!("  %{} = ge %{}, %{}\n", CNT, a, b))
+            RelExp::Rel(rexp, rop, aexp) => unsafe {
+                let l = rexp.dump(s);
+                let r = aexp.dump(s);
+                CNT += 1;
+                match l {
+                    Ok(lcnt) => match r {
+                        Ok(rcnt) => {
+                            match rop {
+                                RelOp::Less => {
+                                    s.push_str(&format!("  %{} = lt %{}, %{}\n", CNT, lcnt, rcnt))
+                                }
+                                RelOp::Greater => {
+                                    s.push_str(&format!("  %{} = gt %{}, %{}\n", CNT, lcnt, rcnt))
+                                }
+                                RelOp::LessEq => {
+                                    s.push_str(&format!("  %{} = le %{}, %{}\n", CNT, lcnt, rcnt))
+                                }
+                                RelOp::GreaterEq => {
+                                    s.push_str(&format!("  %{} = ge %{}, %{}\n", CNT, lcnt, rcnt))
+                                }
+                            };
                         }
-                    };
-                    return CNT;
+                        Err(rvalue) => {
+                            match rop {
+                                RelOp::Less => {
+                                    s.push_str(&format!("  %{} = lt %{}, {}\n", CNT, lcnt, rvalue))
+                                }
+                                RelOp::Greater => {
+                                    s.push_str(&format!("  %{} = gt %{}, {}\n", CNT, lcnt, rvalue))
+                                }
+                                RelOp::LessEq => {
+                                    s.push_str(&format!("  %{} = le %{}, {}\n", CNT, lcnt, rvalue))
+                                }
+                                RelOp::GreaterEq => {
+                                    s.push_str(&format!("  %{} = ge %{}, {}\n", CNT, lcnt, rvalue))
+                                }
+                            };
+                        }
+                    },
+                    Err(lvalue) => match r {
+                        Ok(rcnt) => {
+                            match rop {
+                                RelOp::Less => {
+                                    s.push_str(&format!("  %{} = lt {}, %{}\n", CNT, lvalue, rcnt))
+                                }
+                                RelOp::Greater => {
+                                    s.push_str(&format!("  %{} = gt {}, %{}\n", CNT, lvalue, rcnt))
+                                }
+                                RelOp::LessEq => {
+                                    s.push_str(&format!("  %{} = le {}, %{}\n", CNT, lvalue, rcnt))
+                                }
+                                RelOp::GreaterEq => {
+                                    s.push_str(&format!("  %{} = ge {}, %{}\n", CNT, lvalue, rcnt))
+                                }
+                            };
+                        }
+                        Err(rvalue) => {
+                            match rop {
+                                RelOp::Less => {
+                                    s.push_str(&format!("  %{} = lt {}, {}\n", CNT, lvalue, rvalue))
+                                }
+                                RelOp::Greater => {
+                                    s.push_str(&format!("  %{} = gt {}, {}\n", CNT, lvalue, rvalue))
+                                }
+                                RelOp::LessEq => {
+                                    s.push_str(&format!("  %{} = le {}, {}\n", CNT, lvalue, rvalue))
+                                }
+                                RelOp::GreaterEq => {
+                                    s.push_str(&format!("  %{} = ge {}, {}\n", CNT, lvalue, rvalue))
+                                }
+                            };
+                        }
+                    },
                 }
-            }
+                Ok(CNT)
+            },
         }
     }
 }
@@ -588,21 +788,54 @@ impl EqExp {
         }
     }
 
-    fn dump(&self, s: &mut String) -> i32 {
+    fn dump(&self, s: &mut String) -> Result<i32, i32> {
         match self {
             EqExp::Rel(rexp) => rexp.dump(s),
-            EqExp::Eq(eexp, eop, rexp) => {
-                let a: i32 = eexp.dump(s);
-                let b: i32 = rexp.dump(s);
-                unsafe {
-                    CNT += 1;
-                    match eop {
-                        EqOp::Eq => s.push_str(&format!("  %{} = eq %{}, %{}\n", CNT, a, b)),
-                        EqOp::Neq => s.push_str(&format!("  %{} = ne %{}, %{}\n", CNT, a, b)),
-                    }
-                    return CNT;
+            EqExp::Eq(eexp, eop, rexp) => unsafe {
+                let l = eexp.dump(s);
+                let r = rexp.dump(s);
+                CNT += 1;
+
+                match l {
+                    Ok(lcnt) => match r {
+                        Ok(rcnt) => match eop {
+                            EqOp::Eq => {
+                                s.push_str(&format!("  %{} = eq %{}, %{}\n", CNT, lcnt, rcnt))
+                            }
+                            EqOp::Neq => {
+                                s.push_str(&format!("  %{} = ne %{}, %{}\n", CNT, lcnt, rcnt))
+                            }
+                        },
+                        Err(rvalue) => match eop {
+                            EqOp::Eq => {
+                                s.push_str(&format!("  %{} = eq %{}, {}\n", CNT, lcnt, rvalue))
+                            }
+                            EqOp::Neq => {
+                                s.push_str(&format!("  %{} = ne %{}, {}\n", CNT, lcnt, rvalue))
+                            }
+                        },
+                    },
+                    Err(lvalue) => match r {
+                        Ok(rcnt) => match eop {
+                            EqOp::Eq => {
+                                s.push_str(&format!("  %{} = eq {}, %{}\n", CNT, lvalue, rcnt))
+                            }
+                            EqOp::Neq => {
+                                s.push_str(&format!("  %{} = ne {}, %{}\n", CNT, lvalue, rcnt))
+                            }
+                        },
+                        Err(rvalue) => match eop {
+                            EqOp::Eq => {
+                                s.push_str(&format!("  %{} = eq {}, {}\n", CNT, lvalue, rvalue))
+                            }
+                            EqOp::Neq => {
+                                s.push_str(&format!("  %{} = ne {}, {}\n", CNT, lvalue, rvalue))
+                            }
+                        },
+                    },
                 }
-            }
+                Ok(CNT)
+            },
         }
     }
 }
@@ -624,21 +857,25 @@ impl LAndExp {
         }
     }
 
-    fn dump(&self, s: &mut String) -> i32 {
+    fn dump(&self, s: &mut String) -> Result<i32, i32> {
         match self {
             LAndExp::Eq(eexp) => eexp.dump(s),
-            LAndExp::LAnd(laexp, eexp) => {
-                let a: i32 = laexp.dump(s);
-                let b: i32 = eexp.dump(s);
-                unsafe {
-                    s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 1, a));
-                    s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 2, b));
-                    s.push_str(&format!("  %{} = or %{}, %{}\n", CNT + 3, CNT + 1, CNT + 2));
-                    s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 4, CNT + 3));
-                    CNT += 4;
-                    return CNT;
-                }
-            }
+            LAndExp::LAnd(laexp, eexp) => unsafe {
+                let l = laexp.dump(s);
+                let r = eexp.dump(s);
+                match l {
+                    Ok(lcnt) => s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 1, lcnt)),
+                    Err(lvalue) => s.push_str(&format!("  %{} = eq {}, 0\n", CNT + 1, lvalue)),
+                };
+                match r {
+                    Ok(rcnt) => s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 2, rcnt)),
+                    Err(rvalue) => s.push_str(&format!("  %{} = eq {}, 0\n", CNT + 2, rvalue)),
+                };
+                s.push_str(&format!("  %{} = or %{}, %{}\n", CNT + 3, CNT + 1, CNT + 2));
+                s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 4, CNT + 3));
+                CNT += 4;
+                Ok(CNT)
+            },
         }
     }
 }
@@ -660,20 +897,24 @@ impl LOrExp {
         }
     }
 
-    fn dump(&self, s: &mut String) -> i32 {
+    fn dump(&self, s: &mut String) -> Result<i32, i32> {
         match self {
             LOrExp::LAnd(laexp) => laexp.dump(s),
-            LOrExp::LOr(loexp, laexp) => {
-                let a: i32 = loexp.dump(s);
-                let b: i32 = laexp.dump(s);
-                unsafe {
-                    s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 1, a));
-                    s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 2, b));
-                    s.push_str(&format!("  %{} = or %{}, %{}\n", CNT + 3, CNT + 1, CNT + 2));
-                    CNT += 3;
-                    return CNT;
-                }
-            }
+            LOrExp::LOr(loexp, laexp) => unsafe {
+                let l = loexp.dump(s);
+                let r = laexp.dump(s);
+                match l {
+                    Ok(lcnt) => s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 1, lcnt)),
+                    Err(lvalue) => s.push_str(&format!("  %{} = ne {}, 0\n", CNT + 1, lvalue)),
+                };
+                match r {
+                    Ok(rcnt) => s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 2, rcnt)),
+                    Err(rvalue) => s.push_str(&format!("  %{} = ne {}, 0\n", CNT + 2, rvalue)),
+                };
+                s.push_str(&format!("  %{} = or %{}, %{}\n", CNT + 3, CNT + 1, CNT + 2));
+                CNT += 3;
+                Ok(CNT)
+            },
         }
     }
 }
