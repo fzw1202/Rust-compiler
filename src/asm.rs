@@ -60,7 +60,6 @@ impl GenerateAsm for koopa::ir::FunctionData {
         if frame.size > 2048 {
             s.push_str(&format!("  li t0, {}\n", -frame.size));
             s.push_str(&format!("  add sp, sp, t0\n"));
-
         } else {
             s.push_str(&format!("  addi sp, sp, -{}\n", frame.size));
         }
@@ -82,14 +81,20 @@ impl GenerateAsm for Value {
         match data.kind() {
             ValueKind::Integer(int) => int.value().to_string(),
             ValueKind::Return(ret) => {
-                s.push_str(&format!(
-                    "  lw a0, {}(sp)\n",
-                    frame.unwrap().pos.get(&ret.value().unwrap()).unwrap()
-                ));
+                let retdata = func_data.unwrap().dfg().value(ret.value().unwrap());
+                match retdata.kind() {
+                    ValueKind::Integer(int) => {
+                        s.push_str(&format!("  li a0, {}\n", int.value()));
+                    }
+                    _ => {
+                        let offset = frame.unwrap().pos.get(&ret.value().unwrap()).unwrap();
+                        s.push_str(&format!("  lw a0, {}(sp)\n", offset));
+                    }
+                };
+
                 if frame.unwrap().size > 2047 {
                     s.push_str(&format!("  li t0, {}\n", frame.unwrap().size));
                     s.push_str(&format!("  add sp, sp, t0\n"));
-        
                 } else {
                     s.push_str(&format!("  addi sp, sp, {}\n", frame.unwrap().size));
                 }

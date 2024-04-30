@@ -322,7 +322,7 @@ impl Stmt {
                     Ok(cnt) => s.push_str(&format!("  ret %{}\n", cnt)),
                     Err(value) => s.push_str(&format!("  ret {}\n", value)),
                 }
-            }
+            },
         };
         Ok(())
     }
