@@ -39,11 +39,7 @@ impl FuncDef {
     }
 
     fn dump(&self, s: &mut String) -> io::Result<()> {
-        s.push_str(&format!(
-            "fun @{}(): {} {{\n",
-            self.ident,
-            self.func_type.dump()
-        ));
+        s.push_str(&format!("fun @{}(): {} {{\n", self.ident, self.func_type.dump()));
         self.block.dump(s)?;
         s.push_str("}\n");
         Ok(())
@@ -374,9 +370,9 @@ impl PrimaryExp {
                 match lval.get_value() {
                     Symbol::Const(value) => Err(value),
                     Symbol::Var(name) => {
-                        CNT += 1;
                         s.push_str(&format!("  %{} = load {}\n", CNT, name));
-                        Ok(CNT)
+                        CNT += 1;
+                        Ok(CNT - 1)
                     }
                 }
             },
@@ -412,20 +408,20 @@ impl UnaryExp {
                 match uop {
                     UnaryOp::Pos => result,
                     UnaryOp::Neg => {
-                        CNT += 1;
                         match result {
                             Ok(cnt) => s.push_str(&format!("  %{} = sub 0, %{}\n", CNT, cnt)),
                             Err(value) => s.push_str(&format!("  %{} = sub 0, {}\n", CNT, value)),
                         };
-                        Ok(CNT)
+                        CNT += 1;
+                        Ok(CNT - 1)
                     }
                     UnaryOp::Not => {
-                        CNT += 1;
                         match result {
                             Ok(cnt) => s.push_str(&format!("  %{} = eq %{}, 0\n", CNT, cnt)),
                             Err(value) => s.push_str(&format!("  %{} = eq {}, 0\n", CNT, value)),
                         };
-                        Ok(CNT)
+                        CNT += 1;
+                        Ok(CNT - 1)
                     }
                 }
             },
@@ -477,41 +473,21 @@ impl MulExp {
             MulExp::Mul(mexp, mop, uexp) => unsafe {
                 let l = mexp.dump(s);
                 let r = uexp.dump(s);
-
-                CNT += 1;
                 match l {
                     Ok(lcnt) => {
                         match r {
                             Ok(rcnt) => {
                                 match mop {
-                                    MulOp::Div => s.push_str(&format!(
-                                        "  %{} = div %{}, %{}\n",
-                                        CNT, lcnt, rcnt
-                                    )),
-                                    MulOp::Mod => s.push_str(&format!(
-                                        "  %{} = mod %{}, %{}\n",
-                                        CNT, lcnt, rcnt
-                                    )),
-                                    MulOp::Mul => s.push_str(&format!(
-                                        "  %{} = mul %{}, %{}\n",
-                                        CNT, lcnt, rcnt
-                                    )),
+                                    MulOp::Div => s.push_str(&format!("  %{} = div %{}, %{}\n", CNT, lcnt, rcnt)),
+                                    MulOp::Mod => s.push_str(&format!("  %{} = mod %{}, %{}\n", CNT, lcnt, rcnt)),
+                                    MulOp::Mul => s.push_str(&format!("  %{} = mul %{}, %{}\n", CNT, lcnt, rcnt)),
                                 };
                             }
                             Err(rvalue) => {
                                 match mop {
-                                    MulOp::Div => s.push_str(&format!(
-                                        "  %{} = div %{}, {}\n",
-                                        CNT, lcnt, rvalue
-                                    )),
-                                    MulOp::Mod => s.push_str(&format!(
-                                        "  %{} = mod %{}, {}\n",
-                                        CNT, lcnt, rvalue
-                                    )),
-                                    MulOp::Mul => s.push_str(&format!(
-                                        "  %{} = mul %{}, {}\n",
-                                        CNT, lcnt, rvalue
-                                    )),
+                                    MulOp::Div => s.push_str(&format!("  %{} = div %{}, {}\n", CNT, lcnt, rvalue)),
+                                    MulOp::Mod => s.push_str(&format!("  %{} = mod %{}, {}\n", CNT, lcnt, rvalue)),
+                                    MulOp::Mul => s.push_str(&format!("  %{} = mul %{}, {}\n", CNT, lcnt, rvalue)),
                                 };
                             }
                         };
@@ -520,40 +496,23 @@ impl MulExp {
                         match r {
                             Ok(rcnt) => {
                                 match mop {
-                                    MulOp::Div => s.push_str(&format!(
-                                        "  %{} = div {}, %{}\n",
-                                        CNT, lvalue, rcnt
-                                    )),
-                                    MulOp::Mod => s.push_str(&format!(
-                                        "  %{} = mod {}, %{}\n",
-                                        CNT, lvalue, rcnt
-                                    )),
-                                    MulOp::Mul => s.push_str(&format!(
-                                        "  %{} = mul {}, %{}\n",
-                                        CNT, lvalue, rcnt
-                                    )),
+                                    MulOp::Div => s.push_str(&format!("  %{} = div {}, %{}\n", CNT, lvalue, rcnt)),
+                                    MulOp::Mod => s.push_str(&format!("  %{} = mod {}, %{}\n", CNT, lvalue, rcnt)),
+                                    MulOp::Mul => s.push_str(&format!("  %{} = mul {}, %{}\n", CNT, lvalue, rcnt)),
                                 };
                             }
                             Err(rvalue) => {
                                 match mop {
-                                    MulOp::Div => s.push_str(&format!(
-                                        "  %{} = div {}, {}\n",
-                                        CNT, lvalue, rvalue
-                                    )),
-                                    MulOp::Mod => s.push_str(&format!(
-                                        "  %{} = mod {}, {}\n",
-                                        CNT, lvalue, rvalue
-                                    )),
-                                    MulOp::Mul => s.push_str(&format!(
-                                        "  %{} = mul {}, {}\n",
-                                        CNT, lvalue, rvalue
-                                    )),
+                                    MulOp::Div => s.push_str(&format!("  %{} = div {}, {}\n", CNT, lvalue, rvalue)),
+                                    MulOp::Mod => s.push_str(&format!("  %{} = mod {}, {}\n", CNT, lvalue, rvalue)),
+                                    MulOp::Mul => s.push_str(&format!("  %{} = mul {}, {}\n", CNT, lvalue, rvalue)),
                                 };
                             }
                         };
                     }
                 };
-                Ok(CNT)
+                CNT += 1;
+                Ok(CNT - 1)
             },
         }
     }
@@ -585,33 +544,19 @@ impl AddExp {
             AddExp::Add(aexp, aop, mexp) => unsafe {
                 let l = aexp.dump(s);
                 let r = mexp.dump(s);
-                CNT += 1;
-
                 match l {
                     Ok(lcnt) => {
                         match r {
                             Ok(rcnt) => {
                                 match aop {
-                                    AddOp::Add => s.push_str(&format!(
-                                        "  %{} = add %{}, %{}\n",
-                                        CNT, lcnt, rcnt
-                                    )),
-                                    AddOp::Sub => s.push_str(&format!(
-                                        "  %{} = sub %{}, %{}\n",
-                                        CNT, lcnt, rcnt
-                                    )),
+                                    AddOp::Add => s.push_str(&format!("  %{} = add %{}, %{}\n", CNT, lcnt, rcnt)),
+                                    AddOp::Sub => s.push_str(&format!("  %{} = sub %{}, %{}\n", CNT, lcnt, rcnt)),
                                 };
                             }
                             Err(rvalue) => {
                                 match aop {
-                                    AddOp::Add => s.push_str(&format!(
-                                        "  %{} = add %{}, {}\n",
-                                        CNT, lcnt, rvalue
-                                    )),
-                                    AddOp::Sub => s.push_str(&format!(
-                                        "  %{} = sub %{}, {}\n",
-                                        CNT, lcnt, rvalue
-                                    )),
+                                    AddOp::Add => s.push_str(&format!("  %{} = add %{}, {}\n", CNT, lcnt, rvalue)),
+                                    AddOp::Sub => s.push_str(&format!("  %{} = sub %{}, {}\n", CNT, lcnt, rvalue)),
                                 };
                             }
                         };
@@ -620,32 +565,21 @@ impl AddExp {
                         match r {
                             Ok(rcnt) => {
                                 match aop {
-                                    AddOp::Add => s.push_str(&format!(
-                                        "  %{} = add {}, %{}\n",
-                                        CNT, lvalue, rcnt
-                                    )),
-                                    AddOp::Sub => s.push_str(&format!(
-                                        "  %{} = sub {}, %{}\n",
-                                        CNT, lvalue, rcnt
-                                    )),
+                                    AddOp::Add => s.push_str(&format!("  %{} = add {}, %{}\n", CNT, lvalue, rcnt)),
+                                    AddOp::Sub => s.push_str(&format!("  %{} = sub {}, %{}\n", CNT, lvalue, rcnt)),
                                 };
                             }
                             Err(rvalue) => {
                                 match aop {
-                                    AddOp::Add => s.push_str(&format!(
-                                        "  %{} = add {}, {}\n",
-                                        CNT, lvalue, rvalue
-                                    )),
-                                    AddOp::Sub => s.push_str(&format!(
-                                        "  %{} = sub {}, {}\n",
-                                        CNT, lvalue, rvalue
-                                    )),
+                                    AddOp::Add => s.push_str(&format!("  %{} = add {}, {}\n", CNT, lvalue, rvalue)),
+                                    AddOp::Sub => s.push_str(&format!("  %{} = sub {}, {}\n", CNT, lvalue, rvalue)),
                                 };
                             }
                         };
                     }
                 };
-                Ok(CNT)
+                CNT += 1;
+                Ok(CNT - 1)
             },
         }
     }
@@ -686,78 +620,46 @@ impl RelExp {
             RelExp::Rel(rexp, rop, aexp) => unsafe {
                 let l = rexp.dump(s);
                 let r = aexp.dump(s);
-                CNT += 1;
                 match l {
                     Ok(lcnt) => match r {
                         Ok(rcnt) => {
                             match rop {
-                                RelOp::Less => {
-                                    s.push_str(&format!("  %{} = lt %{}, %{}\n", CNT, lcnt, rcnt))
-                                }
-                                RelOp::Greater => {
-                                    s.push_str(&format!("  %{} = gt %{}, %{}\n", CNT, lcnt, rcnt))
-                                }
-                                RelOp::LessEq => {
-                                    s.push_str(&format!("  %{} = le %{}, %{}\n", CNT, lcnt, rcnt))
-                                }
-                                RelOp::GreaterEq => {
-                                    s.push_str(&format!("  %{} = ge %{}, %{}\n", CNT, lcnt, rcnt))
-                                }
+                                RelOp::Less => s.push_str(&format!("  %{} = lt %{}, %{}\n", CNT, lcnt, rcnt)),
+                                RelOp::Greater => s.push_str(&format!("  %{} = gt %{}, %{}\n", CNT, lcnt, rcnt)),
+                                RelOp::LessEq => s.push_str(&format!("  %{} = le %{}, %{}\n", CNT, lcnt, rcnt)),
+                                RelOp::GreaterEq => s.push_str(&format!("  %{} = ge %{}, %{}\n", CNT, lcnt, rcnt)),
                             };
                         }
                         Err(rvalue) => {
                             match rop {
-                                RelOp::Less => {
-                                    s.push_str(&format!("  %{} = lt %{}, {}\n", CNT, lcnt, rvalue))
-                                }
-                                RelOp::Greater => {
-                                    s.push_str(&format!("  %{} = gt %{}, {}\n", CNT, lcnt, rvalue))
-                                }
-                                RelOp::LessEq => {
-                                    s.push_str(&format!("  %{} = le %{}, {}\n", CNT, lcnt, rvalue))
-                                }
-                                RelOp::GreaterEq => {
-                                    s.push_str(&format!("  %{} = ge %{}, {}\n", CNT, lcnt, rvalue))
-                                }
+                                RelOp::Less => s.push_str(&format!("  %{} = lt %{}, {}\n", CNT, lcnt, rvalue)),
+                                RelOp::Greater => s.push_str(&format!("  %{} = gt %{}, {}\n", CNT, lcnt, rvalue)),
+                                RelOp::LessEq => s.push_str(&format!("  %{} = le %{}, {}\n", CNT, lcnt, rvalue)),
+                                RelOp::GreaterEq => s.push_str(&format!("  %{} = ge %{}, {}\n", CNT, lcnt, rvalue)),
                             };
                         }
                     },
                     Err(lvalue) => match r {
                         Ok(rcnt) => {
                             match rop {
-                                RelOp::Less => {
-                                    s.push_str(&format!("  %{} = lt {}, %{}\n", CNT, lvalue, rcnt))
-                                }
-                                RelOp::Greater => {
-                                    s.push_str(&format!("  %{} = gt {}, %{}\n", CNT, lvalue, rcnt))
-                                }
-                                RelOp::LessEq => {
-                                    s.push_str(&format!("  %{} = le {}, %{}\n", CNT, lvalue, rcnt))
-                                }
-                                RelOp::GreaterEq => {
-                                    s.push_str(&format!("  %{} = ge {}, %{}\n", CNT, lvalue, rcnt))
-                                }
+                                RelOp::Less => s.push_str(&format!("  %{} = lt {}, %{}\n", CNT, lvalue, rcnt)),
+                                RelOp::Greater => s.push_str(&format!("  %{} = gt {}, %{}\n", CNT, lvalue, rcnt)),
+                                RelOp::LessEq => s.push_str(&format!("  %{} = le {}, %{}\n", CNT, lvalue, rcnt)),
+                                RelOp::GreaterEq => s.push_str(&format!("  %{} = ge {}, %{}\n", CNT, lvalue, rcnt)),
                             };
                         }
                         Err(rvalue) => {
                             match rop {
-                                RelOp::Less => {
-                                    s.push_str(&format!("  %{} = lt {}, {}\n", CNT, lvalue, rvalue))
-                                }
-                                RelOp::Greater => {
-                                    s.push_str(&format!("  %{} = gt {}, {}\n", CNT, lvalue, rvalue))
-                                }
-                                RelOp::LessEq => {
-                                    s.push_str(&format!("  %{} = le {}, {}\n", CNT, lvalue, rvalue))
-                                }
-                                RelOp::GreaterEq => {
-                                    s.push_str(&format!("  %{} = ge {}, {}\n", CNT, lvalue, rvalue))
-                                }
+                                RelOp::Less => s.push_str(&format!("  %{} = lt {}, {}\n", CNT, lvalue, rvalue)),
+                                RelOp::Greater => s.push_str(&format!("  %{} = gt {}, {}\n", CNT, lvalue, rvalue)),
+                                RelOp::LessEq => s.push_str(&format!("  %{} = le {}, {}\n", CNT, lvalue, rvalue)),
+                                RelOp::GreaterEq => s.push_str(&format!("  %{} = ge {}, {}\n", CNT, lvalue, rvalue)),
                             };
                         }
                     },
                 }
-                Ok(CNT)
+                CNT += 1;
+                Ok(CNT - 1)
             },
         }
     }
@@ -794,47 +696,30 @@ impl EqExp {
             EqExp::Eq(eexp, eop, rexp) => unsafe {
                 let l = eexp.dump(s);
                 let r = rexp.dump(s);
-                CNT += 1;
-
                 match l {
                     Ok(lcnt) => match r {
                         Ok(rcnt) => match eop {
-                            EqOp::Eq => {
-                                s.push_str(&format!("  %{} = eq %{}, %{}\n", CNT, lcnt, rcnt))
-                            }
-                            EqOp::Neq => {
-                                s.push_str(&format!("  %{} = ne %{}, %{}\n", CNT, lcnt, rcnt))
-                            }
+                            EqOp::Eq => s.push_str(&format!("  %{} = eq %{}, %{}\n", CNT, lcnt, rcnt)),
+                            EqOp::Neq => s.push_str(&format!("  %{} = ne %{}, %{}\n", CNT, lcnt, rcnt)),
                         },
                         Err(rvalue) => match eop {
-                            EqOp::Eq => {
-                                s.push_str(&format!("  %{} = eq %{}, {}\n", CNT, lcnt, rvalue))
-                            }
-                            EqOp::Neq => {
-                                s.push_str(&format!("  %{} = ne %{}, {}\n", CNT, lcnt, rvalue))
-                            }
+                            EqOp::Eq => s.push_str(&format!("  %{} = eq %{}, {}\n", CNT, lcnt, rvalue)),
+                            EqOp::Neq => s.push_str(&format!("  %{} = ne %{}, {}\n", CNT, lcnt, rvalue)),
                         },
                     },
                     Err(lvalue) => match r {
                         Ok(rcnt) => match eop {
-                            EqOp::Eq => {
-                                s.push_str(&format!("  %{} = eq {}, %{}\n", CNT, lvalue, rcnt))
-                            }
-                            EqOp::Neq => {
-                                s.push_str(&format!("  %{} = ne {}, %{}\n", CNT, lvalue, rcnt))
-                            }
+                            EqOp::Eq => s.push_str(&format!("  %{} = eq {}, %{}\n", CNT, lvalue, rcnt)),
+                            EqOp::Neq => s.push_str(&format!("  %{} = ne {}, %{}\n", CNT, lvalue, rcnt)),
                         },
                         Err(rvalue) => match eop {
-                            EqOp::Eq => {
-                                s.push_str(&format!("  %{} = eq {}, {}\n", CNT, lvalue, rvalue))
-                            }
-                            EqOp::Neq => {
-                                s.push_str(&format!("  %{} = ne {}, {}\n", CNT, lvalue, rvalue))
-                            }
+                            EqOp::Eq => s.push_str(&format!("  %{} = eq {}, {}\n", CNT, lvalue, rvalue)),
+                            EqOp::Neq => s.push_str(&format!("  %{} = ne {}, {}\n", CNT, lvalue, rvalue)),
                         },
                     },
                 }
-                Ok(CNT)
+                CNT += 1;
+                Ok(CNT - 1)
             },
         }
     }
@@ -864,17 +749,17 @@ impl LAndExp {
                 let l = laexp.dump(s);
                 let r = eexp.dump(s);
                 match l {
-                    Ok(lcnt) => s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 1, lcnt)),
-                    Err(lvalue) => s.push_str(&format!("  %{} = eq {}, 0\n", CNT + 1, lvalue)),
+                    Ok(lcnt) => s.push_str(&format!("  %{} = eq %{}, 0\n", CNT, lcnt)),
+                    Err(lvalue) => s.push_str(&format!("  %{} = eq {}, 0\n", CNT, lvalue)),
                 };
                 match r {
-                    Ok(rcnt) => s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 2, rcnt)),
-                    Err(rvalue) => s.push_str(&format!("  %{} = eq {}, 0\n", CNT + 2, rvalue)),
+                    Ok(rcnt) => s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 1, rcnt)),
+                    Err(rvalue) => s.push_str(&format!("  %{} = eq {}, 0\n", CNT + 1, rvalue)),
                 };
-                s.push_str(&format!("  %{} = or %{}, %{}\n", CNT + 3, CNT + 1, CNT + 2));
-                s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 4, CNT + 3));
+                s.push_str(&format!("  %{} = or %{}, %{}\n", CNT + 2, CNT, CNT + 1));
+                s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 3, CNT + 2));
                 CNT += 4;
-                Ok(CNT)
+                Ok(CNT - 1)
             },
         }
     }
@@ -904,16 +789,16 @@ impl LOrExp {
                 let l = loexp.dump(s);
                 let r = laexp.dump(s);
                 match l {
-                    Ok(lcnt) => s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 1, lcnt)),
-                    Err(lvalue) => s.push_str(&format!("  %{} = ne {}, 0\n", CNT + 1, lvalue)),
+                    Ok(lcnt) => s.push_str(&format!("  %{} = ne %{}, 0\n", CNT, lcnt)),
+                    Err(lvalue) => s.push_str(&format!("  %{} = ne {}, 0\n", CNT, lvalue)),
                 };
                 match r {
-                    Ok(rcnt) => s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 2, rcnt)),
-                    Err(rvalue) => s.push_str(&format!("  %{} = ne {}, 0\n", CNT + 2, rvalue)),
+                    Ok(rcnt) => s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 1, rcnt)),
+                    Err(rvalue) => s.push_str(&format!("  %{} = ne {}, 0\n", CNT + 1, rvalue)),
                 };
-                s.push_str(&format!("  %{} = or %{}, %{}\n", CNT + 3, CNT + 1, CNT + 2));
+                s.push_str(&format!("  %{} = or %{}, %{}\n", CNT + 2, CNT, CNT + 1));
                 CNT += 3;
-                Ok(CNT)
+                Ok(CNT - 1)
             },
         }
     }
