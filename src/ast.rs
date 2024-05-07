@@ -1,4 +1,3 @@
-use once_cell::sync::Lazy;
 use std::{collections::HashMap, io};
 
 #[derive(Clone)]
@@ -8,20 +7,27 @@ pub enum Symbol {
 }
 
 static mut CNT: i32 = 0;
-static mut SYMBOLS: Lazy<HashMap<String, Symbol>> = Lazy::new(|| HashMap::new());
+static mut VAR_CNT: i32 = 0;
+
+pub struct Scopes {
+    pub symbols: Vec<HashMap<String, Symbol>>,
+}
+
+impl Scopes {
+    pub fn new() -> Self {
+       Self {
+            symbols: vec![],
+       }
+    }
+}
 
 pub struct CompUnit {
     pub func_def: FuncDef,
 }
 
 impl CompUnit {
-    pub fn symbol(&self) -> io::Result<()> {
-        self.func_def.symbol()?;
-        Ok(())
-    }
-
-    pub fn dump(&self, s: &mut String) -> io::Result<()> {
-        self.func_def.dump(s)?;
+    pub fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
+        self.func_def.ir(s, scope)?;
         Ok(())
     }
 }
@@ -33,14 +39,10 @@ pub struct FuncDef {
 }
 
 impl FuncDef {
-    fn symbol(&self) -> io::Result<()> {
-        self.block.symbol()?;
-        Ok(())
-    }
-
-    fn dump(&self, s: &mut String) -> io::Result<()> {
-        s.push_str(&format!("fun @{}(): {} {{\n", self.ident, self.func_type.dump()));
-        self.block.dump(s)?;
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
+        s.push_str(&format!("fun @{}(): {} {{\n", self.ident, self.func_type.ir()));
+        s.push_str("%entry:\n");
+        self.block.ir(s, scope)?;
         s.push_str("}\n");
         Ok(())
     }
@@ -51,7 +53,7 @@ pub enum FuncType {
 }
 
 impl FuncType {
-    fn dump(&self) -> String {
+    fn ir(&self) -> String {
         match self {
             FuncType::Int => "i32".to_string(),
         }
@@ -63,34 +65,12 @@ pub struct Block {
 }
 
 impl Block {
-    fn symbol(&self) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
+        scope.symbols.push(HashMap::new());
         for bitem in &self.bitems {
-            bitem.symbol()?;
+            bitem.ir(s, scope)?;
         }
-        Ok(())
-    }
-
-    fn dump(&self, s: &mut String) -> io::Result<()> {
-        let mut cnt: i32 = 0;
-
-        s.push_str("%entry:\n");
-        for bitem in &self.bitems {
-            bitem.dump(s)?;
-            match bitem {
-                BlockItem::Stm(stmt) => match stmt {
-                    Stmt::Ret(_exp) => {
-                        cnt += 1;
-                        break;
-                    }
-                    _ => (),
-                },
-                _ => (),
-            }
-        }
-
-        if cnt == 0 {
-            s.push_str(&format!("  ret 0\n"));
-        }
+        scope.symbols.pop();
         Ok(())
     }
 }
@@ -101,18 +81,10 @@ pub enum BlockItem {
 }
 
 impl BlockItem {
-    fn symbol(&self) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
         match self {
-            BlockItem::Dec(decl) => decl.symbol()?,
-            BlockItem::Stm(_stmt) => (),
-        };
-        Ok(())
-    }
-
-    fn dump(&self, s: &mut String) -> io::Result<()> {
-        match self {
-            BlockItem::Dec(decl) => decl.dump(s)?,
-            BlockItem::Stm(stmt) => stmt.dump(s)?,
+            BlockItem::Dec(decl) => decl.ir(s, scope)?,
+            BlockItem::Stm(stmt) => stmt.ir(s, scope)?,
         };
         Ok(())
     }
@@ -124,18 +96,19 @@ pub enum Decl {
 }
 
 impl Decl {
-    fn symbol(&self) -> io::Result<()> {
+    fn symbol(&self, scope: &mut Scopes) -> io::Result<()> {
         match self {
-            Decl::Const(cdecl) => cdecl.symbol()?,
-            Decl::Var(vdecl) => vdecl.symbol()?,
+            Decl::Const(cdecl) => cdecl.symbol(scope)?,
+            Decl::Var(vdecl) => vdecl.symbol(scope)?,
         };
         Ok(())
     }
 
-    fn dump(&self, s: &mut String) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
+        self.symbol(scope)?;
         match self {
             Decl::Const(_cdecl) => (),
-            Decl::Var(vdecl) => vdecl.dump(s)?,
+            Decl::Var(vdecl) => vdecl.ir(s, scope)?,
         };
         Ok(())
     }
@@ -147,11 +120,11 @@ pub struct ConstDecl {
 }
 
 impl ConstDecl {
-    fn symbol(&self) -> io::Result<()> {
+    fn symbol(&self, scope: &mut Scopes) -> io::Result<()> {
         match self.btype {
             BType::INT => {
                 for cdef in &self.cdefs {
-                    cdef.symbol()?;
+                    cdef.symbol(scope)?;
                 }
             }
         };
@@ -165,22 +138,22 @@ pub struct VarDecl {
 }
 
 impl VarDecl {
-    fn symbol(&self) -> io::Result<()> {
+    fn symbol(&self, scope: &mut Scopes) -> io::Result<()> {
         match self.btype {
             BType::INT => {
                 for vdef in &self.vdefs {
-                    vdef.symbol()?;
+                    vdef.symbol(scope)?;
                 }
             }
         };
         Ok(())
     }
 
-    fn dump(&self, s: &mut String) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
         match self.btype {
             BType::INT => {
                 for vdef in &self.vdefs {
-                    vdef.dump(s, &"i32".to_string())?;
+                    vdef.ir(s, &"i32".to_string(), scope)?;
                 }
             }
         };
@@ -198,11 +171,10 @@ pub struct ConstDef {
 }
 
 impl ConstDef {
-    fn symbol(&self) -> io::Result<()> {
-        let value: i32 = self.cinitval.symbol();
-        unsafe {
-            SYMBOLS.insert(self.ident.clone(), Symbol::Const(value));
-        }
+    fn symbol(&self, scope: &mut Scopes) -> io::Result<()> {
+        let value: i32 = self.cinitval.symbol(scope);
+        let len = scope.symbols.len() - 1;
+        scope.symbols[len].insert(self.ident.clone(), Symbol::Const(value));
         Ok(())
     }
 }
@@ -213,32 +185,36 @@ pub enum VarDef {
 }
 
 impl VarDef {
-    fn symbol(&self) -> io::Result<()> {
+    fn symbol(&self, scope: &mut Scopes) -> io::Result<()> {
+        let len = scope.symbols.len() - 1;
         match self {
             VarDef::Def(name) => unsafe {
-                SYMBOLS.insert(name.to_string(), Symbol::Var(format!("@_{}", name)));
+                scope.symbols[len].insert(name.to_string(), Symbol::Var(format!("@{}_{}", name, VAR_CNT)));
+                VAR_CNT += 1;
             },
             VarDef::Ass(name, _initval) => unsafe {
-                SYMBOLS.insert(name.to_string(), Symbol::Var(format!("@_{}", name)));
+                scope.symbols[len].insert(name.to_string(), Symbol::Var(format!("@{}_{}",name, VAR_CNT)));
+                VAR_CNT += 1;
             },
         };
         Ok(())
     }
 
-    fn dump(&self, s: &mut String, t: &String) -> io::Result<()> {
+    fn ir(&self, s: &mut String, t: &String, scope: &mut Scopes) -> io::Result<()> {
+        let len = scope.symbols.len() - 1;
         match self {
-            VarDef::Def(name) => unsafe {
-                let varname = SYMBOLS.get(name).unwrap();
+            VarDef::Def(name) => {
+                let varname = scope.symbols[len].get(name).unwrap();
                 match varname {
                     Symbol::Var(n) => s.push_str(&format!("  {} = alloc {}\n", &n, t)),
                     _ => (),
                 };
             },
-            VarDef::Ass(name, initval) => unsafe {
-                let varname = SYMBOLS.get(name).unwrap();
+            VarDef::Ass(name, initval) => {
+                let varname = scope.symbols[len].get(name).unwrap().clone();
                 match varname {
                     Symbol::Var(n) => {
-                        let result = initval.dump(s);
+                        let result = initval.ir(s, scope);
                         s.push_str(&format!("  {} = alloc {}\n", &n, t));
                         match result {
                             Ok(cnt) => {
@@ -262,8 +238,8 @@ pub struct ConstInitVal {
 }
 
 impl ConstInitVal {
-    fn symbol(&self) -> i32 {
-        self.cexp.symbol()
+    fn symbol(&self, scope: &mut Scopes) -> i32 {
+        self.cexp.symbol(scope)
     }
 }
 
@@ -272,8 +248,8 @@ pub struct InitVal {
 }
 
 impl InitVal {
-    fn dump(&self, s: &mut String) -> Result<i32, i32> {
-        self.exp.dump(s)
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
+        self.exp.ir(s, scope)
     }
 }
 pub struct ConstExp {
@@ -281,8 +257,8 @@ pub struct ConstExp {
 }
 
 impl ConstExp {
-    fn symbol(&self) -> i32 {
-        self.exp.symbol()
+    fn symbol(&self, scope: &mut Scopes) -> i32 {
+        self.exp.symbol(scope)
     }
 }
 
@@ -291,38 +267,57 @@ pub struct LVal {
 }
 
 impl LVal {
-    fn get_value(&self) -> Symbol {
-        unsafe { SYMBOLS.get(&self.ident).unwrap().clone() }
+    fn get_value(&self, scope: &mut Scopes) -> Symbol {
+        let mut len = scope.symbols.len() - 1;
+        while len as i32 >= 0 {
+            if let Some(value) = scope.symbols[len].get(&self.ident) {
+                return value.clone();
+            }
+            len -= 1;
+        }
+        panic!("can not find symbol: {}", &self.ident);
     }
 }
 
 pub enum Stmt {
     Ass(LVal, Exp),
+    Exp(Option<Exp>),
+    Blk(Block),
     Ret(Exp),
 }
 
 impl Stmt {
-    fn dump(&self, s: &mut String) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
         match self {
-            Stmt::Ass(lval, exp) => match lval.get_value() {
+            Stmt::Ass(lval, exp) => match lval.get_value(scope) {
                 Symbol::Const(_value) => {
                     panic!("assignment for const value is not allowed!")
                 }
                 Symbol::Var(name) => {
-                    let result = exp.dump(s);
+                    let result = exp.ir(s, scope);
                     match result {
                         Ok(cnt) => s.push_str(&format!("  store %{}, {}\n", cnt, name)),
                         Err(value) => s.push_str(&format!("  store {}, {}\n", value, name)),
                     }
                 }
             },
+            Stmt::Exp(oexp) => {
+                match oexp {
+                    Some(exp) => 
+                        _ = exp.ir(s, scope),
+                    None => (),
+                }
+            },
+            Stmt::Blk(block) => {
+                block.ir(s, scope)?;
+            },
             Stmt::Ret(exp) => {
-                let result = exp.dump(s);
+                let result = exp.ir(s, scope);
                 match result {
                     Ok(cnt) => s.push_str(&format!("  ret %{}\n", cnt)),
                     Err(value) => s.push_str(&format!("  ret {}\n", value)),
                 }
-            },
+            }
         };
         Ok(())
     }
@@ -333,12 +328,12 @@ pub struct Exp {
 }
 
 impl Exp {
-    fn symbol(&self) -> i32 {
-        self.loexp.symbol()
+    fn symbol(&self, scope: &mut Scopes) -> i32 {
+        self.loexp.symbol(scope)
     }
 
-    fn dump(&self, s: &mut String) -> Result<i32, i32> {
-        self.loexp.dump(s)
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
+        self.loexp.ir(s, scope)
     }
 }
 
@@ -349,11 +344,11 @@ pub enum PrimaryExp {
 }
 
 impl PrimaryExp {
-    fn symbol(&self) -> i32 {
+    fn symbol(&self, scope: &mut Scopes) -> i32 {
         match self {
-            PrimaryExp::Exp(exp) => exp.symbol(),
+            PrimaryExp::Exp(exp) => exp.symbol(scope),
             PrimaryExp::Number(ref num) => *num,
-            PrimaryExp::LVal(lval) => match lval.get_value() {
+            PrimaryExp::LVal(lval) => match lval.get_value(scope) {
                 Symbol::Const(value) => value,
                 Symbol::Var(_name) => {
                     panic!("can not use variables to assign const value!")
@@ -362,12 +357,12 @@ impl PrimaryExp {
         }
     }
 
-    fn dump(&self, s: &mut String) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
         match self {
-            PrimaryExp::Exp(exp) => exp.dump(s),
+            PrimaryExp::Exp(exp) => exp.ir(s, scope),
             PrimaryExp::Number(num) => Err(*num),
             PrimaryExp::LVal(lval) => unsafe {
-                match lval.get_value() {
+                match lval.get_value(scope) {
                     Symbol::Const(value) => Err(value),
                     Symbol::Var(name) => {
                         s.push_str(&format!("  %{} = load {}\n", CNT, name));
@@ -386,11 +381,11 @@ pub enum UnaryExp {
 }
 
 impl UnaryExp {
-    fn symbol(&self) -> i32 {
+    fn symbol(&self, scope: &mut Scopes) -> i32 {
         match self {
-            UnaryExp::Primary(pexp) => pexp.symbol(),
+            UnaryExp::Primary(pexp) => pexp.symbol(scope),
             UnaryExp::Unary(uop, uexp) => {
-                let a = uexp.symbol();
+                let a = uexp.symbol(scope);
                 match uop {
                     UnaryOp::Pos => a,
                     UnaryOp::Neg => -a,
@@ -400,11 +395,11 @@ impl UnaryExp {
         }
     }
 
-    fn dump(&self, s: &mut String) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
         match self {
-            UnaryExp::Primary(pexp) => pexp.dump(s),
+            UnaryExp::Primary(pexp) => pexp.ir(s, scope),
             UnaryExp::Unary(uop, uexp) => unsafe {
-                let result = uexp.dump(s);
+                let result = uexp.ir(s, scope);
                 match uop {
                     UnaryOp::Pos => result,
                     UnaryOp::Neg => {
@@ -452,12 +447,12 @@ pub enum MulExp {
 }
 
 impl MulExp {
-    fn symbol(&self) -> i32 {
+    fn symbol(&self, scope: &mut Scopes) -> i32 {
         match self {
-            MulExp::Unary(uexp) => uexp.symbol(),
+            MulExp::Unary(uexp) => uexp.symbol(scope),
             MulExp::Mul(mexp, mop, uexp) => {
-                let a: i32 = mexp.symbol();
-                let b: i32 = uexp.symbol();
+                let a: i32 = mexp.symbol(scope);
+                let b: i32 = uexp.symbol(scope);
                 match mop {
                     MulOp::Div => a / b,
                     MulOp::Mod => a % b,
@@ -467,12 +462,12 @@ impl MulExp {
         }
     }
 
-    fn dump(&self, s: &mut String) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
         match self {
-            MulExp::Unary(uexp) => uexp.dump(s),
+            MulExp::Unary(uexp) => uexp.ir(s, scope),
             MulExp::Mul(mexp, mop, uexp) => unsafe {
-                let l = mexp.dump(s);
-                let r = uexp.dump(s);
+                let l = mexp.ir(s, scope);
+                let r = uexp.ir(s, scope);
                 match l {
                     Ok(lcnt) => {
                         match r {
@@ -524,12 +519,12 @@ pub enum AddExp {
 }
 
 impl AddExp {
-    fn symbol(&self) -> i32 {
+    fn symbol(&self, scope: &mut Scopes) -> i32 {
         match self {
-            AddExp::Mul(mexp) => mexp.symbol(),
+            AddExp::Mul(mexp) => mexp.symbol(scope),
             AddExp::Add(aexp, aop, mexp) => {
-                let a: i32 = aexp.symbol();
-                let b: i32 = mexp.symbol();
+                let a: i32 = aexp.symbol(scope);
+                let b: i32 = mexp.symbol(scope);
                 match aop {
                     AddOp::Add => a + b,
                     AddOp::Sub => a - b,
@@ -538,12 +533,12 @@ impl AddExp {
         }
     }
 
-    fn dump(&self, s: &mut String) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
         match self {
-            AddExp::Mul(mexp) => mexp.dump(s),
+            AddExp::Mul(mexp) => mexp.ir(s, scope),
             AddExp::Add(aexp, aop, mexp) => unsafe {
-                let l = aexp.dump(s);
-                let r = mexp.dump(s);
+                let l = aexp.ir(s, scope);
+                let r = mexp.ir(s, scope);
                 match l {
                     Ok(lcnt) => {
                         match r {
@@ -598,12 +593,12 @@ pub enum RelExp {
 }
 
 impl RelExp {
-    fn symbol(&self) -> i32 {
+    fn symbol(&self, scope: &mut Scopes) -> i32 {
         match self {
-            RelExp::Add(aexp) => aexp.symbol(),
+            RelExp::Add(aexp) => aexp.symbol(scope),
             RelExp::Rel(rexp, rop, aexp) => {
-                let a: i32 = rexp.symbol();
-                let b: i32 = aexp.symbol();
+                let a: i32 = rexp.symbol(scope);
+                let b: i32 = aexp.symbol(scope);
                 match rop {
                     RelOp::Less => (a < b) as i32,
                     RelOp::Greater => (a > b) as i32,
@@ -614,12 +609,12 @@ impl RelExp {
         }
     }
 
-    fn dump(&self, s: &mut String) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
         match self {
-            RelExp::Add(aexp) => aexp.dump(s),
+            RelExp::Add(aexp) => aexp.ir(s, scope),
             RelExp::Rel(rexp, rop, aexp) => unsafe {
-                let l = rexp.dump(s);
-                let r = aexp.dump(s);
+                let l = rexp.ir(s, scope);
+                let r = aexp.ir(s, scope);
                 match l {
                     Ok(lcnt) => match r {
                         Ok(rcnt) => {
@@ -676,12 +671,12 @@ pub enum EqExp {
 }
 
 impl EqExp {
-    fn symbol(&self) -> i32 {
+    fn symbol(&self, scope: &mut Scopes) -> i32 {
         match self {
-            EqExp::Rel(rexp) => rexp.symbol(),
+            EqExp::Rel(rexp) => rexp.symbol(scope),
             EqExp::Eq(eexp, eop, rexp) => {
-                let a: i32 = eexp.symbol();
-                let b: i32 = rexp.symbol();
+                let a: i32 = eexp.symbol(scope);
+                let b: i32 = rexp.symbol(scope);
                 match eop {
                     EqOp::Eq => (a == b) as i32,
                     EqOp::Neq => (a != b) as i32,
@@ -690,12 +685,12 @@ impl EqExp {
         }
     }
 
-    fn dump(&self, s: &mut String) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
         match self {
-            EqExp::Rel(rexp) => rexp.dump(s),
+            EqExp::Rel(rexp) => rexp.ir(s, scope),
             EqExp::Eq(eexp, eop, rexp) => unsafe {
-                let l = eexp.dump(s);
-                let r = rexp.dump(s);
+                let l = eexp.ir(s, scope);
+                let r = rexp.ir(s, scope);
                 match l {
                     Ok(lcnt) => match r {
                         Ok(rcnt) => match eop {
@@ -731,23 +726,23 @@ pub enum LAndExp {
 }
 
 impl LAndExp {
-    fn symbol(&self) -> i32 {
+    fn symbol(&self, scope: &mut Scopes) -> i32 {
         match self {
-            LAndExp::Eq(eexp) => eexp.symbol(),
+            LAndExp::Eq(eexp) => eexp.symbol(scope),
             LAndExp::LAnd(laexp, eexp) => {
-                let a: i32 = laexp.symbol();
-                let b: i32 = eexp.symbol();
+                let a: i32 = laexp.symbol(scope);
+                let b: i32 = eexp.symbol(scope);
                 (a != 0 && b != 0) as i32
             }
         }
     }
 
-    fn dump(&self, s: &mut String) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
         match self {
-            LAndExp::Eq(eexp) => eexp.dump(s),
+            LAndExp::Eq(eexp) => eexp.ir(s, scope),
             LAndExp::LAnd(laexp, eexp) => unsafe {
-                let l = laexp.dump(s);
-                let r = eexp.dump(s);
+                let l = laexp.ir(s, scope);
+                let r = eexp.ir(s, scope);
                 match l {
                     Ok(lcnt) => s.push_str(&format!("  %{} = eq %{}, 0\n", CNT, lcnt)),
                     Err(lvalue) => s.push_str(&format!("  %{} = eq {}, 0\n", CNT, lvalue)),
@@ -771,23 +766,23 @@ pub enum LOrExp {
 }
 
 impl LOrExp {
-    fn symbol(&self) -> i32 {
+    fn symbol(&self, scope: &mut Scopes) -> i32 {
         match self {
-            LOrExp::LAnd(laexp) => laexp.symbol(),
+            LOrExp::LAnd(laexp) => laexp.symbol(scope),
             LOrExp::LOr(loexp, laexp) => {
-                let a: i32 = loexp.symbol();
-                let b: i32 = laexp.symbol();
+                let a: i32 = loexp.symbol(scope);
+                let b: i32 = laexp.symbol(scope);
                 (a != 0 || b != 0) as i32
             }
         }
     }
 
-    fn dump(&self, s: &mut String) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
         match self {
-            LOrExp::LAnd(laexp) => laexp.dump(s),
+            LOrExp::LAnd(laexp) => laexp.ir(s, scope),
             LOrExp::LOr(loexp, laexp) => unsafe {
-                let l = loexp.dump(s);
-                let r = laexp.dump(s);
+                let l = loexp.ir(s, scope);
+                let r = laexp.ir(s, scope);
                 match l {
                     Ok(lcnt) => s.push_str(&format!("  %{} = ne %{}, 0\n", CNT, lcnt)),
                     Err(lvalue) => s.push_str(&format!("  %{} = ne {}, 0\n", CNT, lvalue)),

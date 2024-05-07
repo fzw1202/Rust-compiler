@@ -60,7 +60,7 @@ impl GenerateAsm for koopa::ir::FunctionData {
         if frame.size > 2048 {
             s.push_str(&format!("  li t0, {}\n", -frame.size));
             s.push_str(&format!("  add sp, sp, t0\n"));
-        } else {
+        } else if frame.size > 0 {
             s.push_str(&format!("  addi sp, sp, -{}\n", frame.size));
         }
 
@@ -92,11 +92,12 @@ impl GenerateAsm for Value {
                     }
                 };
 
-                if frame.unwrap().size > 2047 {
-                    s.push_str(&format!("  li t0, {}\n", frame.unwrap().size));
+                let size = frame.unwrap().size;
+                if size > 2047 {
+                    s.push_str(&format!("  li t0, {}\n", size));
                     s.push_str(&format!("  add sp, sp, t0\n"));
-                } else {
-                    s.push_str(&format!("  addi sp, sp, {}\n", frame.unwrap().size));
+                } else if size > 0{
+                    s.push_str(&format!("  addi sp, sp, {}\n", size));
                 }
                 s.push_str("  ret\n");
                 s

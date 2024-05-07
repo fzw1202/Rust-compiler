@@ -23,8 +23,8 @@ fn main() -> Result<()> {
     args.next();
     let output = args.next().unwrap();
     let mut s = String::from("");
-    ast.symbol()?;
-    ast.dump(&mut s)?;
+    let mut scope = ast::Scopes::new();
+    ast.ir(&mut s, &mut scope)?;
 
     if mode == "-koopa" {
         println!("koopa");

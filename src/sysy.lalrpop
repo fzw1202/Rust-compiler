@@ -58,6 +58,8 @@ InitVal: InitVal = <exp: Exp> => InitVal {<>};
 
 Stmt: Stmt = { 
     <lval: LVal> "=" <exp: Exp> ";" => Stmt::Ass(<>),
+    <exp: (Exp)?> ";" => Stmt::Exp(<>),
+    <blk: Block> => Stmt::Blk(<>),
     "return" <exp: Exp> ";" => Stmt::Ret(<>),
 }
 
