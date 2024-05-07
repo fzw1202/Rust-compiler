@@ -67,14 +67,13 @@ pub struct Block {
 
 impl Block {
     fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
-        unsafe {
-            if RET_CNT > 0 {
-                return Ok(());
-            }
-        }
-
         scope.symbols.push(HashMap::new());
         for bitem in &self.bitems {
+            unsafe {
+                if RET_CNT > 0 {
+                    return Ok(());
+                }
+            }
             bitem.ir(s, scope)?;
             match bitem {
                 BlockItem::Stm(stmt) => {
@@ -334,7 +333,7 @@ impl Stmt {
                 if RET_CNT > 0 {
                     return Ok(());
                 }
-                
+
                 let result = exp.ir(s, scope);
                 match result {
                     Ok(cnt) => s.push_str(&format!("  ret %{}\n", cnt)),
