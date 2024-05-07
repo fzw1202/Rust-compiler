@@ -8,6 +8,7 @@ pub enum Symbol {
 
 static mut CNT: i32 = 0;
 static mut VAR_CNT: i32 = 0;
+static mut RET_CNT: i32 = 0;
 
 pub struct Scopes {
     pub symbols: Vec<HashMap<String, Symbol>>,
@@ -66,9 +67,27 @@ pub struct Block {
 
 impl Block {
     fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
+        unsafe {
+            if RET_CNT > 0 {
+                return Ok(());
+            }
+        }
+
         scope.symbols.push(HashMap::new());
         for bitem in &self.bitems {
             bitem.ir(s, scope)?;
+            match bitem {
+                BlockItem::Stm(stmt) => {
+                    match stmt {
+                        Stmt::Ret(_exp) => unsafe {
+                            RET_CNT += 1;
+                            break
+                        },
+                        _ => (),
+                    }
+                }
+                _ => (),
+            }
         }
         scope.symbols.pop();
         Ok(())
@@ -311,7 +330,11 @@ impl Stmt {
             Stmt::Blk(block) => {
                 block.ir(s, scope)?;
             },
-            Stmt::Ret(exp) => {
+            Stmt::Ret(exp) => unsafe {
+                if RET_CNT > 0 {
+                    return Ok(());
+                }
+                
                 let result = exp.ir(s, scope);
                 match result {
                     Ok(cnt) => s.push_str(&format!("  ret %{}\n", cnt)),
