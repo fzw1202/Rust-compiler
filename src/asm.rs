@@ -64,7 +64,11 @@ impl GenerateAsm for koopa::ir::FunctionData {
             s.push_str(&format!("  addi sp, sp, -{}\n", frame.size));
         }
 
-        for (&_bb, node) in self.layout().bbs() {
+        for (&bb, node) in self.layout().bbs() {
+            let blk_name = &self.dfg().bb(bb).name().as_ref().unwrap()[1..];
+            if blk_name != "entry" {
+                s.push_str(&format!("\n{}:\n", blk_name));
+            }
             for &inst in node.insts().keys() {
                 s.push_str(&inst.generate(Some(self), Some(&frame)));
             }
@@ -103,6 +107,13 @@ impl GenerateAsm for Value {
                 s
             }
             ValueKind::Alloc(_alloc) => s,
+            ValueKind::Load(load) => {
+                let des = *frame.unwrap().pos.get(self).unwrap();
+                let src = *frame.unwrap().pos.get(&load.src()).unwrap();
+                s.push_str(&format!("  lw t0, {}(sp)\n", src));
+                s.push_str(&format!("  sw t0, {}(sp)\n", des));
+                s
+            }
             ValueKind::Store(store) => {
                 let src = func_data.unwrap().dfg().value(store.value());
                 match src.kind() {
@@ -116,13 +127,6 @@ impl GenerateAsm for Value {
                 }
                 let offset = *frame.unwrap().pos.get(&store.dest()).unwrap();
                 s.push_str(&format!("  sw t0, {}(sp)\n", offset));
-                s
-            }
-            ValueKind::Load(load) => {
-                let des = *frame.unwrap().pos.get(self).unwrap();
-                let src = *frame.unwrap().pos.get(&load.src()).unwrap();
-                s.push_str(&format!("  lw t0, {}(sp)\n", src));
-                s.push_str(&format!("  sw t0, {}(sp)\n", des));
                 s
             }
             ValueKind::Binary(bin) => {
@@ -228,6 +232,28 @@ impl GenerateAsm for Value {
                 }
                 s
             }
+            ValueKind::Branch(branch) => {
+                let cond = branch.cond();
+                match func_data.unwrap().dfg().value(cond).kind() {
+                    ValueKind::Integer(int) => {
+                        s.push_str(&format!("  li t0, {}\n", int.value()));
+                    }
+                    _ => {
+                        let offset = frame.unwrap().pos.get(&cond).unwrap();
+                        s.push_str(&format!("  lw t0, {}(sp)\n", offset));
+                    }
+                }
+                let true_name = &func_data.unwrap().dfg().bb(branch.true_bb()).name().as_ref().unwrap()[1..];
+                let false_name = &func_data.unwrap().dfg().bb(branch.false_bb()).name().as_ref().unwrap()[1..];
+                s.push_str(&format!("  bnez t0, {}\n", true_name));
+                s.push_str(&format!("  j {}\n", false_name));
+                s
+            },
+            ValueKind::Jump(jump) => {
+                let name = &func_data.unwrap().dfg().bb(jump.target()).name().as_ref().unwrap()[1..];
+                s.push_str(&format!("  j {}\n", name));
+                s
+            },
             _ => unreachable!(),
         }
     }
