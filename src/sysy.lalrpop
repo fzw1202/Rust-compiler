@@ -57,10 +57,21 @@ ConstInitVal: ConstInitVal = <cexp: ConstExp> => ConstInitVal {<>};
 InitVal: InitVal = <exp: Exp> => InitVal {<>};
 
 Stmt: Stmt = { 
-    <lval: LVal> "=" <exp: Exp> ";" => Stmt::Ass(<>),
-    <exp: (Exp)?> ";" => Stmt::Exp(<>),
-    <blk: Block> => Stmt::Blk(<>),
-    "return" <exp: Exp> ";" => Stmt::Ret(<>),
+    <ostmt: OpenStmt> => Stmt::Open(<>),
+    <cstmt: CloseStmt> => Stmt::Close(<>),
+}
+
+OpenStmt: OpenStmt = {
+    "if" "(" <exp: Exp> ")" <stmt: Stmt> => OpenStmt::If(exp, Box::new(stmt)),
+    "if" "(" <exp: Exp> ")" <cstmt: CloseStmt> "else" <ostmt: OpenStmt> => OpenStmt::Else(exp, cstmt, Box::new(ostmt)),
+}
+
+CloseStmt: CloseStmt = {
+    <lval: LVal> "=" <exp: Exp> ";" => CloseStmt::Ass(<>),
+    <exp: (Exp)?> ";" => CloseStmt::Exp(<>),
+    <blk: Block> => CloseStmt::Blk(<>),
+    "return" <exp: Exp> ";" => CloseStmt::Ret(<>),
+    "if" "(" <exp: Exp> ")" <cstmt1: CloseStmt> "else" <cstmt2: CloseStmt> => CloseStmt::Else(exp, Box::new(cstmt1), Box::new(cstmt2)),
 }
 
 ConstExp: ConstExp = <exp: Exp> => ConstExp {<>};

@@ -9,6 +9,7 @@ pub enum Symbol {
 static mut CNT: i32 = 0;
 static mut VAR_CNT: i32 = 0;
 static mut RET_CNT: i32 = 0;
+static mut BLK_CNT: i32 = 0;
 
 pub struct Scopes {
     pub symbols: Vec<HashMap<String, Symbol>>,
@@ -16,9 +17,7 @@ pub struct Scopes {
 
 impl Scopes {
     pub fn new() -> Self {
-       Self {
-            symbols: vec![],
-       }
+        Self { symbols: vec![] }
     }
 }
 
@@ -42,9 +41,22 @@ pub struct FuncDef {
 impl FuncDef {
     fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
         s.push_str(&format!("fun @{}(): {} {{\n", self.ident, self.func_type.ir()));
-        s.push_str("%entry:\n");
-        self.block.ir(s, scope)?;
-        s.push_str("}\n");
+        if self.ident == "main" {
+            s.push_str("%entry:\n");
+            s.push_str("  %ret = alloc i32\n");
+            s.push_str("  jump %start\n");
+            s.push_str("\n%start:\n");
+
+            self.block.ir(s, scope)?;
+            
+            s.push_str("  jump %end\n");
+            s.push_str("\n%end:\n");
+            unsafe {
+                s.push_str(&format!("  %{} = load %ret\n", CNT));
+                s.push_str(&format!("  ret %{}\n", CNT));
+            }
+            s.push_str("}\n");
+        }
         Ok(())
     }
 }
@@ -69,24 +81,7 @@ impl Block {
     fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
         scope.symbols.push(HashMap::new());
         for bitem in &self.bitems {
-            unsafe {
-                if RET_CNT > 0 {
-                    return Ok(());
-                }
-            }
             bitem.ir(s, scope)?;
-            match bitem {
-                BlockItem::Stm(stmt) => {
-                    match stmt {
-                        Stmt::Ret(_exp) => unsafe {
-                            RET_CNT += 1;
-                            break
-                        },
-                        _ => (),
-                    }
-                }
-                _ => (),
-            }
         }
         scope.symbols.pop();
         Ok(())
@@ -211,7 +206,7 @@ impl VarDef {
                 VAR_CNT += 1;
             },
             VarDef::Ass(name, _initval) => unsafe {
-                scope.symbols[len].insert(name.to_string(), Symbol::Var(format!("@{}_{}",name, VAR_CNT)));
+                scope.symbols[len].insert(name.to_string(), Symbol::Var(format!("@{}_{}", name, VAR_CNT)));
                 VAR_CNT += 1;
             },
         };
@@ -227,7 +222,7 @@ impl VarDef {
                     Symbol::Var(n) => s.push_str(&format!("  {} = alloc {}\n", &n, t)),
                     _ => (),
                 };
-            },
+            }
             VarDef::Ass(name, initval) => {
                 let varname = scope.symbols[len].get(name).unwrap().clone();
                 match varname {
@@ -245,7 +240,7 @@ impl VarDef {
                     }
                     _ => (),
                 };
-            },
+            }
         };
         Ok(())
     }
@@ -298,16 +293,73 @@ impl LVal {
 }
 
 pub enum Stmt {
-    Ass(LVal, Exp),
-    Exp(Option<Exp>),
-    Blk(Block),
-    Ret(Exp),
+    Open(OpenStmt),
+    Close(CloseStmt),
 }
 
 impl Stmt {
     fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
         match self {
-            Stmt::Ass(lval, exp) => match lval.get_value(scope) {
+            Stmt::Open(ostmt) => ostmt.ir(s, scope),
+            Stmt::Close(cstmt) => cstmt.ir(s, scope),
+        }
+    }
+}
+
+pub enum OpenStmt {
+    If(Exp, Box<Stmt>),
+    Else(Exp, CloseStmt, Box<OpenStmt>),
+}
+
+impl OpenStmt {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
+        let blk_cnt: i32;
+        unsafe {
+            blk_cnt = BLK_CNT;
+            BLK_CNT += 1;
+        }
+
+        match self {
+            OpenStmt::If(exp, stmt) => {
+                match exp.ir(s, scope) {
+                    Ok(cnt) => s.push_str(&format!("  br %{}, %then_{}, %end_{}\n", cnt, blk_cnt, blk_cnt)),
+                    Err(value) => s.push_str(&format!("  br {}, %then_{}, %end_{}\n", value, blk_cnt, blk_cnt)),
+                }
+                s.push_str(&format!("\n%then_{}:\n", blk_cnt));
+                stmt.ir(s, scope)?;
+                s.push_str(&format!("  jump %end_{}\n", blk_cnt));
+                s.push_str(&format!("\n%end_{}:\n", blk_cnt));
+            }
+            OpenStmt::Else(exp, cstmt, ostmt) => {
+                match exp.ir(s, scope) {
+                    Ok(cnt) => s.push_str(&format!("  br %{}, %then_{}, %else_{}\n", cnt, blk_cnt, blk_cnt)),
+                    Err(value) => s.push_str(&format!("  br {}, %then_{}, %else_{}\n", value, blk_cnt, blk_cnt)),
+                }
+                s.push_str(&format!("\n%then_{}:\n", blk_cnt));
+                cstmt.ir(s, scope)?;
+                s.push_str(&format!("  jump %end_{}\n", blk_cnt));
+                s.push_str(&format!("\n%else_{}:\n", blk_cnt));
+                ostmt.ir(s, scope)?;
+                s.push_str(&format!("  jump %end_{}\n", blk_cnt));
+                s.push_str(&format!("\n%end_{}:\n", blk_cnt));
+            }
+        }
+        Ok(())
+    }
+}
+
+pub enum CloseStmt {
+    Ass(LVal, Exp),
+    Exp(Option<Exp>),
+    Blk(Block),
+    Ret(Exp),
+    Else(Exp, Box<CloseStmt>, Box<CloseStmt>),
+}
+
+impl CloseStmt {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
+        match self {
+            CloseStmt::Ass(lval, exp) => match lval.get_value(scope) {
                 Symbol::Const(_value) => {
                     panic!("assignment for const value is not allowed!")
                 }
@@ -319,26 +371,41 @@ impl Stmt {
                     }
                 }
             },
-            Stmt::Exp(oexp) => {
-                match oexp {
-                    Some(exp) => 
-                        _ = exp.ir(s, scope),
-                    None => (),
-                }
+            CloseStmt::Exp(oexp) => match oexp {
+                Some(exp) => _ = exp.ir(s, scope),
+                None => (),
             },
-            Stmt::Blk(block) => {
+            CloseStmt::Blk(block) => {
                 block.ir(s, scope)?;
-            },
-            Stmt::Ret(exp) => unsafe {
-                if RET_CNT > 0 {
-                    return Ok(());
-                }
-
+            }
+            CloseStmt::Ret(exp) => unsafe {
                 let result = exp.ir(s, scope);
                 match result {
-                    Ok(cnt) => s.push_str(&format!("  ret %{}\n", cnt)),
-                    Err(value) => s.push_str(&format!("  ret {}\n", value)),
+                    Ok(cnt) => s.push_str(&format!("  store %{}, %ret\n", cnt)),
+                    Err(value) => s.push_str(&format!("  store {}, %ret\n", value)),
                 }
+
+                s.push_str(&format!("  jump %end\n"));
+                s.push_str(&format!("\n%ret_{}:\n", RET_CNT));
+                RET_CNT += 1;
+            },
+            CloseStmt::Else(exp, cstmt1, cstmt2) => {
+                let blk_cnt: i32;
+                unsafe {
+                    blk_cnt = BLK_CNT;
+                    BLK_CNT += 1;
+                }
+                match exp.ir(s, scope) {
+                    Ok(cnt) => s.push_str(&format!("  br %{}, %then_{}, %else_{}\n", cnt, blk_cnt, blk_cnt)),
+                    Err(value) => s.push_str(&format!("  br {}, %then_{}, %else_{}\n", value, blk_cnt, blk_cnt)),
+                }
+                s.push_str(&format!("\n%then_{}:\n", blk_cnt));
+                cstmt1.ir(s, scope)?;
+                s.push_str(&format!("  jump %end_{}\n", blk_cnt));
+                s.push_str(&format!("\n%else_{}:\n", blk_cnt));
+                cstmt2.ir(s, scope)?;
+                s.push_str(&format!("  jump %end_{}\n", blk_cnt));
+                s.push_str(&format!("\n%end_{}:\n", blk_cnt));
             }
         };
         Ok(())
