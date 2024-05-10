@@ -1121,6 +1121,7 @@ impl LAndExp {
                     ResultEnum::Mem(rmem) => {
                         s.push_str(&format!("  %{} = load %{}\n", CNT, rmem));
                         s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 1, CNT));
+                        s.push_str(&format!("  store %{}, %{}\n", CNT + 1, cnt));
                         CNT += 1;
                     },
                 };
@@ -1187,7 +1188,8 @@ impl LOrExp {
                     },
                     ResultEnum::Mem(rmem) => {
                         s.push_str(&format!("  %{} = load %{}\n", CNT, rmem));
-                        s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 1, CNT));
+                        s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 1, CNT));
+                        s.push_str(&format!("  store %{}, %{}\n", CNT + 1, cnt));
                         CNT += 1;
                     },
                 };
