@@ -1,23 +1,56 @@
 use std::{collections::HashMap, io};
 
 #[derive(Clone)]
-pub enum Symbol {
+pub enum SymbolEnum {
     Const(i32),
     Var(String),
+}
+
+pub enum ResultEnum {
+    Lit(i32),
+    Reg(i32),
+    Mem(i32),
+}
+
+#[derive(Clone)]
+pub struct Symbol {
+    pub ty: Option<BType>,
+    pub symbol: SymbolEnum,
+}
+
+impl Symbol {
+    fn new_const(t: Option<BType>, value: i32) -> Self {
+        Self {
+            ty: t,
+            symbol: SymbolEnum::Const(value),
+        }
+    }
+
+    fn new_var(t: Option<BType>, name: String) -> Self {
+        Self {
+            ty: t,
+            symbol: SymbolEnum::Var(name),
+        }
+    }
 }
 
 static mut CNT: i32 = 0;
 static mut VAR_CNT: i32 = 0;
 static mut RET_CNT: i32 = 0;
 static mut BLK_CNT: i32 = 0;
+static mut SHORT_CNT: i32 = 0;
 
 pub struct Scopes {
+    pub ty: Option<BType>,
     pub symbols: Vec<HashMap<String, Symbol>>,
 }
 
 impl Scopes {
     pub fn new() -> Self {
-        Self { symbols: vec![] }
+        Self { 
+            ty: None,
+            symbols: vec![],
+        }
     }
 }
 
@@ -134,13 +167,9 @@ pub struct ConstDecl {
 
 impl ConstDecl {
     fn symbol(&self, scope: &mut Scopes) -> io::Result<()> {
-        match self.btype {
-            BType::INT => {
-                for cdef in &self.cdefs {
-                    cdef.symbol(scope)?;
-                }
-            }
-        };
+        for cdef in &self.cdefs {
+            cdef.symbol(scope, &self.btype)?;
+        }
         Ok(())
     }
 }
@@ -152,30 +181,31 @@ pub struct VarDecl {
 
 impl VarDecl {
     fn symbol(&self, scope: &mut Scopes) -> io::Result<()> {
-        match self.btype {
-            BType::INT => {
-                for vdef in &self.vdefs {
-                    vdef.symbol(scope)?;
-                }
-            }
-        };
+        for vdef in &self.vdefs {
+            vdef.symbol(scope, &self.btype)?;
+        }
         Ok(())
     }
 
     fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
-        match self.btype {
-            BType::INT => {
-                for vdef in &self.vdefs {
-                    vdef.ir(s, &"i32".to_string(), scope)?;
-                }
-            }
-        };
+        for vdef in &self.vdefs {
+            vdef.ir(s, scope, &self.btype)?;
+        }
         Ok(())
     }
 }
 
+#[derive(Clone)]
 pub enum BType {
     INT,
+}
+
+impl BType {
+    fn name(&self) -> String {
+        match self {
+            BType::INT => "i32".to_string(),
+        }
+    }
 }
 
 pub struct ConstDef {
@@ -184,10 +214,10 @@ pub struct ConstDef {
 }
 
 impl ConstDef {
-    fn symbol(&self, scope: &mut Scopes) -> io::Result<()> {
+    fn symbol(&self, scope: &mut Scopes, t: &BType) -> io::Result<()> {
         let value: i32 = self.cinitval.symbol(scope);
         let len = scope.symbols.len() - 1;
-        scope.symbols[len].insert(self.ident.clone(), Symbol::Const(value));
+        scope.symbols[len].insert(self.ident.clone(), Symbol::new_const(Some(t.clone()), value));
         Ok(())
     }
 }
@@ -198,43 +228,48 @@ pub enum VarDef {
 }
 
 impl VarDef {
-    fn symbol(&self, scope: &mut Scopes) -> io::Result<()> {
+    fn symbol(&self, scope: &mut Scopes, t: &BType) -> io::Result<()> {
         let len = scope.symbols.len() - 1;
         match self {
             VarDef::Def(name) => unsafe {
-                scope.symbols[len].insert(name.to_string(), Symbol::Var(format!("@{}_{}", name, VAR_CNT)));
+                scope.symbols[len].insert(name.to_string(), Symbol::new_var(Some(t.clone()), format!("@{}_{}", name, VAR_CNT)));
                 VAR_CNT += 1;
             },
             VarDef::Ass(name, _initval) => unsafe {
-                scope.symbols[len].insert(name.to_string(), Symbol::Var(format!("@{}_{}", name, VAR_CNT)));
+                scope.symbols[len].insert(name.to_string(), Symbol::new_var(Some(t.clone()), format!("@{}_{}", name, VAR_CNT)));
                 VAR_CNT += 1;
             },
         };
         Ok(())
     }
 
-    fn ir(&self, s: &mut String, t: &String, scope: &mut Scopes) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes, t: &BType) -> io::Result<()> {
         let len = scope.symbols.len() - 1;
         match self {
             VarDef::Def(name) => {
                 let varname = scope.symbols[len].get(name).unwrap();
-                match varname {
-                    Symbol::Var(n) => s.push_str(&format!("  {} = alloc {}\n", &n, t)),
+                match &varname.symbol {
+                    SymbolEnum::Var(n) => s.push_str(&format!("  {} = alloc {}\n", &n, t.name())),
                     _ => (),
                 };
             }
             VarDef::Ass(name, initval) => {
                 let varname = scope.symbols[len].get(name).unwrap().clone();
-                match varname {
-                    Symbol::Var(n) => {
+                match varname.symbol {
+                    SymbolEnum::Var(n) => {
                         let result = initval.ir(s, scope);
-                        s.push_str(&format!("  {} = alloc {}\n", &n, t));
+                        s.push_str(&format!("  {} = alloc {}\n", &n, t.name()));
                         match result {
-                            Ok(cnt) => {
+                            ResultEnum::Reg(cnt) => {
                                 s.push_str(&format!("  store %{}, {}\n", cnt, &n));
                             }
-                            Err(value) => {
+                            ResultEnum::Lit(value) => {
                                 s.push_str(&format!("  store {}, {}\n", value, &n));
+                            }
+                            ResultEnum::Mem(mem) => unsafe {
+                                s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                                s.push_str(&format!("  store %{}, {}\n", CNT, &n));
+                                CNT += 1;
                             }
                         };
                     }
@@ -261,7 +296,7 @@ pub struct InitVal {
 }
 
 impl InitVal {
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> ResultEnum {
         self.exp.ir(s, scope)
     }
 }
@@ -322,8 +357,13 @@ impl OpenStmt {
         match self {
             OpenStmt::If(exp, stmt) => {
                 match exp.ir(s, scope) {
-                    Ok(cnt) => s.push_str(&format!("  br %{}, %then_{}, %end_{}\n", cnt, blk_cnt, blk_cnt)),
-                    Err(value) => s.push_str(&format!("  br {}, %then_{}, %end_{}\n", value, blk_cnt, blk_cnt)),
+                    ResultEnum::Reg(cnt) => s.push_str(&format!("  br %{}, %then_{}, %end_{}\n", cnt, blk_cnt, blk_cnt)),
+                    ResultEnum::Lit(value) => s.push_str(&format!("  br {}, %then_{}, %end_{}\n", value, blk_cnt, blk_cnt)),
+                    ResultEnum::Mem(mem) => unsafe {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                        s.push_str(&format!("  br %{}, %then_{}, %end_{}\n", CNT, blk_cnt, blk_cnt));
+                        CNT += 1;
+                    },
                 }
                 s.push_str(&format!("\n%then_{}:\n", blk_cnt));
                 stmt.ir(s, scope)?;
@@ -332,8 +372,13 @@ impl OpenStmt {
             }
             OpenStmt::Else(exp, cstmt, ostmt) => {
                 match exp.ir(s, scope) {
-                    Ok(cnt) => s.push_str(&format!("  br %{}, %then_{}, %else_{}\n", cnt, blk_cnt, blk_cnt)),
-                    Err(value) => s.push_str(&format!("  br {}, %then_{}, %else_{}\n", value, blk_cnt, blk_cnt)),
+                    ResultEnum::Reg(cnt) => s.push_str(&format!("  br %{}, %then_{}, %else_{}\n", cnt, blk_cnt, blk_cnt)),
+                    ResultEnum::Lit(value) => s.push_str(&format!("  br {}, %then_{}, %else_{}\n", value, blk_cnt, blk_cnt)),
+                    ResultEnum::Mem(mem) => unsafe {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                        s.push_str(&format!("  br %{}, %then_{}, %else_{}\n", CNT, blk_cnt, blk_cnt));
+                        CNT += 1;
+                    },
                 }
                 s.push_str(&format!("\n%then_{}:\n", blk_cnt));
                 cstmt.ir(s, scope)?;
@@ -359,15 +404,20 @@ pub enum CloseStmt {
 impl CloseStmt {
     fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
         match self {
-            CloseStmt::Ass(lval, exp) => match lval.get_value(scope) {
-                Symbol::Const(_value) => {
+            CloseStmt::Ass(lval, exp) => match &lval.get_value(scope).symbol {
+                SymbolEnum::Const(_value) => {
                     panic!("assignment for const value is not allowed!")
                 }
-                Symbol::Var(name) => {
+                SymbolEnum::Var(name) => {
                     let result = exp.ir(s, scope);
                     match result {
-                        Ok(cnt) => s.push_str(&format!("  store %{}, {}\n", cnt, name)),
-                        Err(value) => s.push_str(&format!("  store {}, {}\n", value, name)),
+                        ResultEnum::Reg(cnt) => s.push_str(&format!("  store %{}, {}\n", cnt, name)),
+                        ResultEnum::Lit(value) => s.push_str(&format!("  store {}, {}\n", value, name)),
+                        ResultEnum::Mem(mem) => unsafe {
+                            s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                            s.push_str(&format!("  store %{}, {}\n", CNT, name));
+                            CNT += 1;
+                        },
                     }
                 }
             },
@@ -381,8 +431,13 @@ impl CloseStmt {
             CloseStmt::Ret(exp) => unsafe {
                 let result = exp.ir(s, scope);
                 match result {
-                    Ok(cnt) => s.push_str(&format!("  store %{}, %ret\n", cnt)),
-                    Err(value) => s.push_str(&format!("  store {}, %ret\n", value)),
+                    ResultEnum::Reg(cnt) => s.push_str(&format!("  store %{}, %ret\n", cnt)),
+                    ResultEnum::Lit(value) => s.push_str(&format!("  store {}, %ret\n", value)),
+                    ResultEnum::Mem(mem) => {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                        s.push_str(&format!("  store %{}, %ret\n", CNT));
+                        CNT += 1;
+                    },
                 }
 
                 s.push_str(&format!("  jump %end\n"));
@@ -396,8 +451,13 @@ impl CloseStmt {
                     BLK_CNT += 1;
                 }
                 match exp.ir(s, scope) {
-                    Ok(cnt) => s.push_str(&format!("  br %{}, %then_{}, %else_{}\n", cnt, blk_cnt, blk_cnt)),
-                    Err(value) => s.push_str(&format!("  br {}, %then_{}, %else_{}\n", value, blk_cnt, blk_cnt)),
+                    ResultEnum::Reg(cnt) => s.push_str(&format!("  br %{}, %then_{}, %else_{}\n", cnt, blk_cnt, blk_cnt)),
+                    ResultEnum::Lit(value) => s.push_str(&format!("  br {}, %then_{}, %else_{}\n", value, blk_cnt, blk_cnt)),
+                    ResultEnum::Mem(mem) => unsafe {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                        s.push_str(&format!("  br %{}, %then_{}, %else_{}\n", CNT, blk_cnt, blk_cnt));
+                        CNT += 1;
+                    },
                 }
                 s.push_str(&format!("\n%then_{}:\n", blk_cnt));
                 cstmt1.ir(s, scope)?;
@@ -421,7 +481,7 @@ impl Exp {
         self.loexp.symbol(scope)
     }
 
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> ResultEnum {
         self.loexp.ir(s, scope)
     }
 }
@@ -437,26 +497,26 @@ impl PrimaryExp {
         match self {
             PrimaryExp::Exp(exp) => exp.symbol(scope),
             PrimaryExp::Number(ref num) => *num,
-            PrimaryExp::LVal(lval) => match lval.get_value(scope) {
-                Symbol::Const(value) => value,
-                Symbol::Var(_name) => {
+            PrimaryExp::LVal(lval) => match &lval.get_value(scope).symbol {
+                SymbolEnum::Const(value) => *value,
+                SymbolEnum::Var(_name) => {
                     panic!("can not use variables to assign const value!")
                 }
             },
         }
     }
 
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> ResultEnum {
         match self {
             PrimaryExp::Exp(exp) => exp.ir(s, scope),
-            PrimaryExp::Number(num) => Err(*num),
+            PrimaryExp::Number(num) => ResultEnum::Lit(*num),
             PrimaryExp::LVal(lval) => unsafe {
-                match lval.get_value(scope) {
-                    Symbol::Const(value) => Err(value),
-                    Symbol::Var(name) => {
+                match &lval.get_value(scope).symbol {
+                    SymbolEnum::Const(value) => ResultEnum::Lit(*value),
+                    SymbolEnum::Var(name) => {
                         s.push_str(&format!("  %{} = load {}\n", CNT, name));
                         CNT += 1;
-                        Ok(CNT - 1)
+                        ResultEnum::Reg(CNT - 1)
                     }
                 }
             },
@@ -484,7 +544,7 @@ impl UnaryExp {
         }
     }
 
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> ResultEnum {
         match self {
             UnaryExp::Primary(pexp) => pexp.ir(s, scope),
             UnaryExp::Unary(uop, uexp) => unsafe {
@@ -493,19 +553,29 @@ impl UnaryExp {
                     UnaryOp::Pos => result,
                     UnaryOp::Neg => {
                         match result {
-                            Ok(cnt) => s.push_str(&format!("  %{} = sub 0, %{}\n", CNT, cnt)),
-                            Err(value) => s.push_str(&format!("  %{} = sub 0, {}\n", CNT, value)),
+                            ResultEnum::Reg(cnt) => s.push_str(&format!("  %{} = sub 0, %{}\n", CNT, cnt)),
+                            ResultEnum::Lit(value) => s.push_str(&format!("  %{} = sub 0, {}\n", CNT, value)),
+                            ResultEnum::Mem(mem) => {
+                                s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                                s.push_str(&format!("  %{} = sub 0, %{}\n", CNT + 1, CNT));
+                                CNT += 1;
+                            },
                         };
                         CNT += 1;
-                        Ok(CNT - 1)
+                        ResultEnum::Reg(CNT - 1)
                     }
                     UnaryOp::Not => {
                         match result {
-                            Ok(cnt) => s.push_str(&format!("  %{} = eq %{}, 0\n", CNT, cnt)),
-                            Err(value) => s.push_str(&format!("  %{} = eq {}, 0\n", CNT, value)),
+                            ResultEnum::Reg(cnt) => s.push_str(&format!("  %{} = eq %{}, 0\n", CNT, cnt)),
+                            ResultEnum::Lit(value) => s.push_str(&format!("  %{} = eq {}, 0\n", CNT, value)),
+                            ResultEnum::Mem(mem) => {
+                                s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                                s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 1, CNT));
+                                CNT += 1;
+                            },
                         };
                         CNT += 1;
-                        Ok(CNT - 1)
+                        ResultEnum::Reg(CNT - 1)
                     }
                 }
             },
@@ -551,52 +621,100 @@ impl MulExp {
         }
     }
 
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> ResultEnum {
         match self {
             MulExp::Unary(uexp) => uexp.ir(s, scope),
             MulExp::Mul(mexp, mop, uexp) => unsafe {
                 let l = mexp.ir(s, scope);
                 let r = uexp.ir(s, scope);
                 match l {
-                    Ok(lcnt) => {
+                    ResultEnum::Reg(lcnt) => {
                         match r {
-                            Ok(rcnt) => {
+                            ResultEnum::Reg(rcnt) => {
                                 match mop {
                                     MulOp::Div => s.push_str(&format!("  %{} = div %{}, %{}\n", CNT, lcnt, rcnt)),
                                     MulOp::Mod => s.push_str(&format!("  %{} = mod %{}, %{}\n", CNT, lcnt, rcnt)),
                                     MulOp::Mul => s.push_str(&format!("  %{} = mul %{}, %{}\n", CNT, lcnt, rcnt)),
                                 };
                             }
-                            Err(rvalue) => {
+                            ResultEnum::Lit(rvalue) => {
                                 match mop {
                                     MulOp::Div => s.push_str(&format!("  %{} = div %{}, {}\n", CNT, lcnt, rvalue)),
                                     MulOp::Mod => s.push_str(&format!("  %{} = mod %{}, {}\n", CNT, lcnt, rvalue)),
                                     MulOp::Mul => s.push_str(&format!("  %{} = mul %{}, {}\n", CNT, lcnt, rvalue)),
                                 };
-                            }
+                            },
+                            ResultEnum::Mem(rmem) => {
+                                s.push_str(&format!("  %{} = load %{}\n", CNT, rmem));
+                                match mop {
+                                    MulOp::Div => s.push_str(&format!("  %{} = div %{}, %{}\n", CNT + 1, lcnt, CNT)),
+                                    MulOp::Mod => s.push_str(&format!("  %{} = mod %{}, %{}\n", CNT + 1, lcnt, CNT)),
+                                    MulOp::Mul => s.push_str(&format!("  %{} = mul %{}, %{}\n", CNT + 1, lcnt, CNT)),
+                                };
+                                CNT += 1;
+                            },
                         };
                     }
-                    Err(lvalue) => {
+                    ResultEnum::Lit(lvalue) => {
                         match r {
-                            Ok(rcnt) => {
+                            ResultEnum::Reg(rcnt) => {
                                 match mop {
                                     MulOp::Div => s.push_str(&format!("  %{} = div {}, %{}\n", CNT, lvalue, rcnt)),
                                     MulOp::Mod => s.push_str(&format!("  %{} = mod {}, %{}\n", CNT, lvalue, rcnt)),
                                     MulOp::Mul => s.push_str(&format!("  %{} = mul {}, %{}\n", CNT, lvalue, rcnt)),
                                 };
                             }
-                            Err(rvalue) => {
+                            ResultEnum::Lit(rvalue) => {
                                 match mop {
                                     MulOp::Div => s.push_str(&format!("  %{} = div {}, {}\n", CNT, lvalue, rvalue)),
                                     MulOp::Mod => s.push_str(&format!("  %{} = mod {}, {}\n", CNT, lvalue, rvalue)),
                                     MulOp::Mul => s.push_str(&format!("  %{} = mul {}, {}\n", CNT, lvalue, rvalue)),
                                 };
+                            },
+                            ResultEnum::Mem(rmem) => {
+                                s.push_str(&format!("  %{} = load %{}\n", CNT, rmem));
+                                match mop {
+                                    MulOp::Div => s.push_str(&format!("  %{} = div {}, %{}\n", CNT + 1, lvalue, CNT)),
+                                    MulOp::Mod => s.push_str(&format!("  %{} = mod {}, %{}\n", CNT + 1, lvalue, CNT)),
+                                    MulOp::Mul => s.push_str(&format!("  %{} = mul {}, %{}\n", CNT + 1, lvalue, CNT)),
+                                };
+                                CNT += 1;
+                            },
+                        };
+                    },
+                    ResultEnum::Mem(lmem) => {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, lmem));
+                        match r {
+                            ResultEnum::Reg(rcnt) => {
+                                match mop {
+                                    MulOp::Div => s.push_str(&format!("  %{} = div %{}, %{}\n", CNT + 1, CNT, rcnt)),
+                                    MulOp::Mod => s.push_str(&format!("  %{} = mod %{}, %{}\n", CNT + 1, CNT, rcnt)),
+                                    MulOp::Mul => s.push_str(&format!("  %{} = mul %{}, %{}\n", CNT + 1, CNT, rcnt)),
+                                };
+                                CNT += 1;
                             }
+                            ResultEnum::Lit(rvalue) => {
+                                match mop {
+                                    MulOp::Div => s.push_str(&format!("  %{} = div %{}, {}\n", CNT + 1, CNT, rvalue)),
+                                    MulOp::Mod => s.push_str(&format!("  %{} = mod %{}, {}\n", CNT + 1, CNT, rvalue)),
+                                    MulOp::Mul => s.push_str(&format!("  %{} = mul %{}, {}\n", CNT + 1, CNT, rvalue)),
+                                };
+                                CNT += 1;
+                            },
+                            ResultEnum::Mem(rmem) => {
+                                s.push_str(&format!("  %{} = load %{}\n", CNT + 1, rmem));
+                                match mop {
+                                    MulOp::Div => s.push_str(&format!("  %{} = div %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
+                                    MulOp::Mod => s.push_str(&format!("  %{} = mod %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
+                                    MulOp::Mul => s.push_str(&format!("  %{} = mul %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
+                                };
+                                CNT += 2;
+                            },
                         };
                     }
                 };
                 CNT += 1;
-                Ok(CNT - 1)
+                ResultEnum::Reg(CNT - 1)
             },
         }
     }
@@ -622,48 +740,91 @@ impl AddExp {
         }
     }
 
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> ResultEnum {
         match self {
             AddExp::Mul(mexp) => mexp.ir(s, scope),
             AddExp::Add(aexp, aop, mexp) => unsafe {
                 let l = aexp.ir(s, scope);
                 let r = mexp.ir(s, scope);
                 match l {
-                    Ok(lcnt) => {
+                    ResultEnum::Reg(lcnt) => {
                         match r {
-                            Ok(rcnt) => {
+                            ResultEnum::Reg(rcnt) => {
                                 match aop {
                                     AddOp::Add => s.push_str(&format!("  %{} = add %{}, %{}\n", CNT, lcnt, rcnt)),
                                     AddOp::Sub => s.push_str(&format!("  %{} = sub %{}, %{}\n", CNT, lcnt, rcnt)),
                                 };
                             }
-                            Err(rvalue) => {
+                            ResultEnum::Lit(rvalue) => {
                                 match aop {
                                     AddOp::Add => s.push_str(&format!("  %{} = add %{}, {}\n", CNT, lcnt, rvalue)),
                                     AddOp::Sub => s.push_str(&format!("  %{} = sub %{}, {}\n", CNT, lcnt, rvalue)),
                                 };
-                            }
+                            },
+                            ResultEnum::Mem(rmem) => {
+                                s.push_str(&format!("  %{} = load %{}\n", CNT, rmem));
+                                match aop {
+                                    AddOp::Add => s.push_str(&format!("  %{} = add %{}, %{}\n", CNT + 1, lcnt, CNT)),
+                                    AddOp::Sub => s.push_str(&format!("  %{} = sub %{}, %{}\n", CNT + 1, lcnt, CNT)),
+                                };
+                                CNT += 1;
+                            },
                         };
                     }
-                    Err(lvalue) => {
+                    ResultEnum::Lit(lvalue) => {
                         match r {
-                            Ok(rcnt) => {
+                            ResultEnum::Reg(rcnt) => {
                                 match aop {
                                     AddOp::Add => s.push_str(&format!("  %{} = add {}, %{}\n", CNT, lvalue, rcnt)),
                                     AddOp::Sub => s.push_str(&format!("  %{} = sub {}, %{}\n", CNT, lvalue, rcnt)),
                                 };
                             }
-                            Err(rvalue) => {
+                            ResultEnum::Lit(rvalue) => {
                                 match aop {
                                     AddOp::Add => s.push_str(&format!("  %{} = add {}, {}\n", CNT, lvalue, rvalue)),
                                     AddOp::Sub => s.push_str(&format!("  %{} = sub {}, {}\n", CNT, lvalue, rvalue)),
                                 };
+                            },
+                            ResultEnum::Mem(rmem) => {
+                                s.push_str(&format!("  %{} = load %{}\n", CNT, rmem));
+                                match aop {
+                                    AddOp::Add => s.push_str(&format!("  %{} = add {}, %{}\n", CNT + 1, lvalue, CNT)),
+                                    AddOp::Sub => s.push_str(&format!("  %{} = sub {}, %{}\n", CNT + 1, lvalue, CNT)),
+                                };
+                                CNT += 1;
+                            },
+                        };
+                    },
+                    ResultEnum::Mem(lmem) => {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, lmem));
+                        match r {
+                            ResultEnum::Reg(rcnt) => {
+                                match aop {
+                                    AddOp::Add => s.push_str(&format!("  %{} = add %{}, %{}\n", CNT + 1, CNT, rcnt)),
+                                    AddOp::Sub => s.push_str(&format!("  %{} = sub %{}, %{}\n", CNT + 1, CNT, rcnt)),
+                                };
+                                CNT += 1;
                             }
+                            ResultEnum::Lit(rvalue) => {
+                                match aop {
+                                    AddOp::Add => s.push_str(&format!("  %{} = add %{}, {}\n", CNT + 1, CNT, rvalue)),
+                                    AddOp::Sub => s.push_str(&format!("  %{} = sub %{}, {}\n", CNT + 1, CNT, rvalue)),
+                                };
+                                CNT += 1;
+                            },
+                            ResultEnum::Mem(rmem) => {
+                                s.push_str(&format!("  %{} = load %{}\n", CNT + 1, rmem));
+                                match aop {
+                                    AddOp::Add => s.push_str(&format!("  %{} = add %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
+                                    AddOp::Sub => s.push_str(&format!("  %{} = sub %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
+                                };
+                                CNT += 2;
+                            },
                         };
                     }
                 };
                 CNT += 1;
-                Ok(CNT - 1)
+                ResultEnum::Reg(CNT - 1)
             },
         }
     }
@@ -698,15 +859,15 @@ impl RelExp {
         }
     }
 
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> ResultEnum {
         match self {
             RelExp::Add(aexp) => aexp.ir(s, scope),
             RelExp::Rel(rexp, rop, aexp) => unsafe {
                 let l = rexp.ir(s, scope);
                 let r = aexp.ir(s, scope);
                 match l {
-                    Ok(lcnt) => match r {
-                        Ok(rcnt) => {
+                    ResultEnum::Reg(lcnt) => match r {
+                        ResultEnum::Reg(rcnt) => {
                             match rop {
                                 RelOp::Less => s.push_str(&format!("  %{} = lt %{}, %{}\n", CNT, lcnt, rcnt)),
                                 RelOp::Greater => s.push_str(&format!("  %{} = gt %{}, %{}\n", CNT, lcnt, rcnt)),
@@ -714,17 +875,27 @@ impl RelExp {
                                 RelOp::GreaterEq => s.push_str(&format!("  %{} = ge %{}, %{}\n", CNT, lcnt, rcnt)),
                             };
                         }
-                        Err(rvalue) => {
+                        ResultEnum::Lit(rvalue) => {
                             match rop {
                                 RelOp::Less => s.push_str(&format!("  %{} = lt %{}, {}\n", CNT, lcnt, rvalue)),
                                 RelOp::Greater => s.push_str(&format!("  %{} = gt %{}, {}\n", CNT, lcnt, rvalue)),
                                 RelOp::LessEq => s.push_str(&format!("  %{} = le %{}, {}\n", CNT, lcnt, rvalue)),
                                 RelOp::GreaterEq => s.push_str(&format!("  %{} = ge %{}, {}\n", CNT, lcnt, rvalue)),
                             };
+                        },
+                        ResultEnum::Mem(rmem) => {
+                            s.push_str(&format!("  %{} = load %{}\n", CNT, rmem));
+                            match rop {
+                                RelOp::Less => s.push_str(&format!("  %{} = lt %{}, %{}\n", CNT + 1, lcnt, CNT)),
+                                RelOp::Greater => s.push_str(&format!("  %{} = gt %{}, %{}\n", CNT + 1, lcnt, CNT)),
+                                RelOp::LessEq => s.push_str(&format!("  %{} = le %{}, %{}\n", CNT + 1, lcnt, CNT)),
+                                RelOp::GreaterEq => s.push_str(&format!("  %{} = ge %{}, %{}\n", CNT + 1, lcnt, CNT)),
+                            };
+                            CNT += 1;
                         }
                     },
-                    Err(lvalue) => match r {
-                        Ok(rcnt) => {
+                    ResultEnum::Lit(lvalue) => match r {
+                        ResultEnum::Reg(rcnt) => {
                             match rop {
                                 RelOp::Less => s.push_str(&format!("  %{} = lt {}, %{}\n", CNT, lvalue, rcnt)),
                                 RelOp::Greater => s.push_str(&format!("  %{} = gt {}, %{}\n", CNT, lvalue, rcnt)),
@@ -732,18 +903,61 @@ impl RelExp {
                                 RelOp::GreaterEq => s.push_str(&format!("  %{} = ge {}, %{}\n", CNT, lvalue, rcnt)),
                             };
                         }
-                        Err(rvalue) => {
+                        ResultEnum::Lit(rvalue) => {
                             match rop {
                                 RelOp::Less => s.push_str(&format!("  %{} = lt {}, {}\n", CNT, lvalue, rvalue)),
                                 RelOp::Greater => s.push_str(&format!("  %{} = gt {}, {}\n", CNT, lvalue, rvalue)),
                                 RelOp::LessEq => s.push_str(&format!("  %{} = le {}, {}\n", CNT, lvalue, rvalue)),
                                 RelOp::GreaterEq => s.push_str(&format!("  %{} = ge {}, {}\n", CNT, lvalue, rvalue)),
                             };
+                        },
+                        ResultEnum::Mem(rmem) => {
+                            s.push_str(&format!("  %{} = load %{}\n", CNT, rmem));
+                            match rop {
+                                RelOp::Less => s.push_str(&format!("  %{} = lt{}, %{}\n", CNT + 1, lvalue, CNT)),
+                                RelOp::Greater => s.push_str(&format!("  %{} = gt {}, %{}\n", CNT + 1, lvalue, CNT)),
+                                RelOp::LessEq => s.push_str(&format!("  %{} = le {}, %{}\n", CNT + 1, lvalue, CNT)),
+                                RelOp::GreaterEq => s.push_str(&format!("  %{} = ge {}, %{}\n", CNT + 1, lvalue, CNT)),
+                            };
+                            CNT += 1;
                         }
+                    },
+                    ResultEnum::Mem(lmem) => {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, lmem));
+                        match r {
+                            ResultEnum::Reg(rcnt) => {
+                                match rop {
+                                    RelOp::Less => s.push_str(&format!("  %{} = lt %{}, %{}\n", CNT + 1, CNT, rcnt)),
+                                    RelOp::Greater => s.push_str(&format!("  %{} = gt %{}, %{}\n", CNT + 1, CNT, rcnt)),
+                                    RelOp::LessEq => s.push_str(&format!("  %{} = le %{}, %{}\n", CNT + 1, CNT, rcnt)),
+                                    RelOp::GreaterEq => s.push_str(&format!("  %{} = ge %{}, %{}\n", CNT + 1, CNT, rcnt)),
+                                };
+                                CNT += 1;
+                            }
+                            ResultEnum::Lit(rvalue) => {
+                                match rop {
+                                    RelOp::Less => s.push_str(&format!("  %{} = lt %{}, {}\n", CNT + 1, CNT, rvalue)),
+                                    RelOp::Greater => s.push_str(&format!("  %{} = gt %{}, {}\n", CNT + 1, CNT, rvalue)),
+                                    RelOp::LessEq => s.push_str(&format!("  %{} = le %{}, {}\n", CNT + 1, CNT, rvalue)),
+                                    RelOp::GreaterEq => s.push_str(&format!("  %{} = ge %{}, {}\n", CNT + 1, CNT, rvalue)),
+                                };
+                                CNT += 1;
+                            },
+                            ResultEnum::Mem(rmem) => {
+                                s.push_str(&format!("  %{} = load %{}\n", CNT + 1, rmem));
+                                match rop {
+                                    RelOp::Less => s.push_str(&format!("  %{} = lt %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
+                                    RelOp::Greater => s.push_str(&format!("  %{} = gt %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
+                                    RelOp::LessEq => s.push_str(&format!("  %{} = le %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
+                                    RelOp::GreaterEq => s.push_str(&format!("  %{} = ge %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
+                                };
+                                CNT += 2;
+                            }
+                        };
                     },
                 }
                 CNT += 1;
-                Ok(CNT - 1)
+                ResultEnum::Reg(CNT - 1)
             },
         }
     }
@@ -774,36 +988,79 @@ impl EqExp {
         }
     }
 
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> ResultEnum {
         match self {
             EqExp::Rel(rexp) => rexp.ir(s, scope),
             EqExp::Eq(eexp, eop, rexp) => unsafe {
                 let l = eexp.ir(s, scope);
                 let r = rexp.ir(s, scope);
                 match l {
-                    Ok(lcnt) => match r {
-                        Ok(rcnt) => match eop {
+                    ResultEnum::Reg(lcnt) => match r {
+                        ResultEnum::Reg(rcnt) => match eop {
                             EqOp::Eq => s.push_str(&format!("  %{} = eq %{}, %{}\n", CNT, lcnt, rcnt)),
                             EqOp::Neq => s.push_str(&format!("  %{} = ne %{}, %{}\n", CNT, lcnt, rcnt)),
                         },
-                        Err(rvalue) => match eop {
+                        ResultEnum::Lit(rvalue) => match eop {
                             EqOp::Eq => s.push_str(&format!("  %{} = eq %{}, {}\n", CNT, lcnt, rvalue)),
                             EqOp::Neq => s.push_str(&format!("  %{} = ne %{}, {}\n", CNT, lcnt, rvalue)),
                         },
+                        ResultEnum::Mem(rmem) => {
+                            s.push_str(&format!("  %{} = load %{}\n", CNT, rmem));
+                            match eop {
+                                EqOp::Eq => s.push_str(&format!("  %{} = eq %{}, %{}\n", CNT + 1, lcnt, CNT)),
+                                EqOp::Neq => s.push_str(&format!("  %{} = ne %{}, %{}\n", CNT + 1, lcnt, CNT)),
+                            };
+                            CNT += 1;
+                        },
                     },
-                    Err(lvalue) => match r {
-                        Ok(rcnt) => match eop {
+                    ResultEnum::Lit(lvalue) => match r {
+                        ResultEnum::Reg(rcnt) => match eop {
                             EqOp::Eq => s.push_str(&format!("  %{} = eq {}, %{}\n", CNT, lvalue, rcnt)),
                             EqOp::Neq => s.push_str(&format!("  %{} = ne {}, %{}\n", CNT, lvalue, rcnt)),
                         },
-                        Err(rvalue) => match eop {
+                        ResultEnum::Lit(rvalue) => match eop {
                             EqOp::Eq => s.push_str(&format!("  %{} = eq {}, {}\n", CNT, lvalue, rvalue)),
                             EqOp::Neq => s.push_str(&format!("  %{} = ne {}, {}\n", CNT, lvalue, rvalue)),
                         },
+                        ResultEnum::Mem(rmem) => {
+                            s.push_str(&format!("  %{} = load %{}\n", CNT, rmem));
+                            match eop {
+                                EqOp::Eq => s.push_str(&format!("  %{} = eq {}, %{}\n", CNT + 1, lvalue, CNT)),
+                                EqOp::Neq => s.push_str(&format!("  %{} = ne {}, %{}\n", CNT + 1, lvalue, CNT)),
+                            };
+                            CNT += 1;
+                        },
+                    },
+                    ResultEnum::Mem(lmem) => {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, lmem));
+                        match r {
+                            ResultEnum::Reg(rcnt) => {
+                                match eop {
+                                    EqOp::Eq => s.push_str(&format!("  %{} = eq %{}, %{}\n", CNT + 1, CNT, rcnt)),
+                                    EqOp::Neq => s.push_str(&format!("  %{} = ne %{}, %{}\n", CNT + 1, CNT, rcnt)),
+                                };
+                                CNT += 1;
+                            },
+                            ResultEnum::Lit(rvalue) => {
+                                match eop {
+                                    EqOp::Eq => s.push_str(&format!("  %{} = eq %{}, {}\n", CNT + 1, CNT, rvalue)),
+                                    EqOp::Neq => s.push_str(&format!("  %{} = ne %{}, {}\n", CNT + 1, CNT, rvalue)),
+                                };
+                                CNT += 1;
+                            },
+                            ResultEnum::Mem(rmem) => {
+                                s.push_str(&format!("  %{} = load %{}\n", CNT + 1, rmem));
+                                match eop {
+                                    EqOp::Eq => s.push_str(&format!("  %{} = eq %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
+                                    EqOp::Neq => s.push_str(&format!("  %{} = ne %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
+                                };
+                                CNT += 2;
+                            },
+                        };
                     },
                 }
                 CNT += 1;
-                Ok(CNT - 1)
+                ResultEnum::Reg(CNT - 1)
             },
         }
     }
@@ -826,24 +1083,51 @@ impl LAndExp {
         }
     }
 
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> ResultEnum {
         match self {
             LAndExp::Eq(eexp) => eexp.ir(s, scope),
             LAndExp::LAnd(laexp, eexp) => unsafe {
+                let short_cnt = SHORT_CNT;
+                SHORT_CNT += 1;
+                let cnt = CNT;
+                CNT += 1;
+
+                s.push_str(&format!("  %{} = alloc {}\n", cnt, "i32".to_string()));
+                s.push_str(&format!("  store {}, %{}\n", 0, cnt));
                 let l = laexp.ir(s, scope);
-                let r = eexp.ir(s, scope);
                 match l {
-                    Ok(lcnt) => s.push_str(&format!("  %{} = eq %{}, 0\n", CNT, lcnt)),
-                    Err(lvalue) => s.push_str(&format!("  %{} = eq {}, 0\n", CNT, lvalue)),
+                    ResultEnum::Reg(lcnt) => s.push_str(&format!("  %{} = ne %{}, 0\n", CNT, lcnt)),
+                    ResultEnum::Lit(lvalue) => s.push_str(&format!("  %{} = ne {}, 0\n", CNT, lvalue)),
+                    ResultEnum::Mem(lmem) => {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, lmem));
+                        s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 1, CNT));
+                        CNT += 1;
+                    },
                 };
+                s.push_str(&format!("  br %{}, %land_rhs_{}, %land_end_{}\n", CNT, short_cnt, short_cnt));
+                s.push_str(&format!("\n%land_rhs_{}:\n", short_cnt));
+
+                CNT += 1;
+                let r = eexp.ir(s, scope);
                 match r {
-                    Ok(rcnt) => s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 1, rcnt)),
-                    Err(rvalue) => s.push_str(&format!("  %{} = eq {}, 0\n", CNT + 1, rvalue)),
+                    ResultEnum::Reg(rcnt) => {
+                        s.push_str(&format!("  %{} = ne %{}, 0\n", CNT, rcnt));
+                        s.push_str(&format!("  store %{}, %{}\n", CNT, cnt));
+                    },
+                    ResultEnum::Lit(rvalue) => {
+                        s.push_str(&format!("  %{} = ne {}, 0\n", CNT, rvalue));
+                        s.push_str(&format!("  store %{}, %{}\n", CNT, cnt));
+                    },
+                    ResultEnum::Mem(rmem) => {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, rmem));
+                        s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 1, CNT));
+                        CNT += 1;
+                    },
                 };
-                s.push_str(&format!("  %{} = or %{}, %{}\n", CNT + 2, CNT, CNT + 1));
-                s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 3, CNT + 2));
-                CNT += 4;
-                Ok(CNT - 1)
+                s.push_str(&format!("  jump %land_end_{}\n", short_cnt));
+                s.push_str(&format!("\n%land_end_{}:\n", short_cnt));
+                CNT += 1;
+                ResultEnum::Mem(cnt)
             },
         }
     }
@@ -866,23 +1150,51 @@ impl LOrExp {
         }
     }
 
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> Result<i32, i32> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> ResultEnum {
         match self {
             LOrExp::LAnd(laexp) => laexp.ir(s, scope),
             LOrExp::LOr(loexp, laexp) => unsafe {
+                let short_cnt = SHORT_CNT;
+                SHORT_CNT += 1;
+                let cnt = CNT;
+                CNT += 1;
+
+                s.push_str(&format!("  %{} = alloc {}\n", cnt, "i32".to_string()));
+                s.push_str(&format!("  store {}, %{}\n", 1, cnt));
                 let l = loexp.ir(s, scope);
-                let r = laexp.ir(s, scope);
                 match l {
-                    Ok(lcnt) => s.push_str(&format!("  %{} = ne %{}, 0\n", CNT, lcnt)),
-                    Err(lvalue) => s.push_str(&format!("  %{} = ne {}, 0\n", CNT, lvalue)),
+                    ResultEnum::Reg(lcnt) => s.push_str(&format!("  %{} = eq %{}, 0\n", CNT, lcnt)),
+                    ResultEnum::Lit(lvalue) => s.push_str(&format!("  %{} = eq {}, 0\n", CNT, lvalue)),
+                    ResultEnum::Mem(lmem) => {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, lmem));
+                        s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 1, CNT));
+                        CNT += 1;
+                    },
                 };
+                s.push_str(&format!("  br %{}, %lor_rhs_{}, %lor_end_{}\n", CNT, short_cnt, short_cnt));
+                s.push_str(&format!("\n%lor_rhs_{}:\n", short_cnt));
+
+                CNT += 1;
+                let r = laexp.ir(s, scope);
                 match r {
-                    Ok(rcnt) => s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 1, rcnt)),
-                    Err(rvalue) => s.push_str(&format!("  %{} = ne {}, 0\n", CNT + 1, rvalue)),
+                    ResultEnum::Reg(rcnt) => {
+                        s.push_str(&format!("  %{} = ne %{}, 0\n", CNT, rcnt));
+                        s.push_str(&format!("  store %{}, %{}\n", CNT, cnt));
+                    },
+                    ResultEnum::Lit(rvalue) => { 
+                        s.push_str(&format!("  %{} = ne {}, 0\n", CNT, rvalue));
+                        s.push_str(&format!("  store %{}, %{}\n", CNT, cnt));
+                    },
+                    ResultEnum::Mem(rmem) => {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, rmem));
+                        s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 1, CNT));
+                        CNT += 1;
+                    },
                 };
-                s.push_str(&format!("  %{} = or %{}, %{}\n", CNT + 2, CNT, CNT + 1));
-                CNT += 3;
-                Ok(CNT - 1)
+                s.push_str(&format!("  jump %lor_end_{}\n", short_cnt));
+                s.push_str(&format!("\n%lor_end_{}:\n", short_cnt));
+                CNT += 1;
+                ResultEnum::Mem(cnt)
             },
         }
     }
