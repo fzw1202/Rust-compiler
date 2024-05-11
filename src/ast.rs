@@ -39,6 +39,8 @@ static mut VAR_CNT: i32 = 0;
 static mut RET_CNT: i32 = 0;
 static mut BLK_CNT: i32 = 0;
 static mut SHORT_CNT: i32 = 0;
+static mut BREAK_CNT: i32 = 0;
+static mut CONTINUE_CNT: i32 = 0;
 
 pub struct Scopes {
     pub ty: Option<BType>,
@@ -80,7 +82,7 @@ impl FuncDef {
             s.push_str("  jump %start\n");
             s.push_str("\n%start:\n");
 
-            self.block.ir(s, scope)?;
+            self.block.ir(s, scope, None)?;
             
             s.push_str("  jump %end\n");
             s.push_str("\n%end:\n");
@@ -111,10 +113,10 @@ pub struct Block {
 }
 
 impl Block {
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>) -> io::Result<()> {
         scope.symbols.push(HashMap::new());
         for bitem in &self.bitems {
-            bitem.ir(s, scope)?;
+            bitem.ir(s, scope, c)?;
         }
         scope.symbols.pop();
         Ok(())
@@ -127,10 +129,10 @@ pub enum BlockItem {
 }
 
 impl BlockItem {
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>) -> io::Result<()> {
         match self {
             BlockItem::Dec(decl) => decl.ir(s, scope)?,
-            BlockItem::Stm(stmt) => stmt.ir(s, scope)?,
+            BlockItem::Stm(stmt) => stmt.ir(s, scope, c)?,
         };
         Ok(())
     }
@@ -333,10 +335,10 @@ pub enum Stmt {
 }
 
 impl Stmt {
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>) -> io::Result<()> {
         match self {
-            Stmt::Open(ostmt) => ostmt.ir(s, scope),
-            Stmt::Close(cstmt) => cstmt.ir(s, scope),
+            Stmt::Open(ostmt) => ostmt.ir(s, scope, c),
+            Stmt::Close(cstmt) => cstmt.ir(s, scope, c),
         }
     }
 }
@@ -344,10 +346,11 @@ impl Stmt {
 pub enum OpenStmt {
     If(Exp, Box<Stmt>),
     Else(Exp, CloseStmt, Box<OpenStmt>),
+    While(Exp, Box<OpenStmt>),
 }
 
 impl OpenStmt {
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>) -> io::Result<()> {
         let blk_cnt: i32;
         unsafe {
             blk_cnt = BLK_CNT;
@@ -366,10 +369,10 @@ impl OpenStmt {
                     },
                 }
                 s.push_str(&format!("\n%then_{}:\n", blk_cnt));
-                stmt.ir(s, scope)?;
+                stmt.ir(s, scope, c)?;
                 s.push_str(&format!("  jump %end_{}\n", blk_cnt));
                 s.push_str(&format!("\n%end_{}:\n", blk_cnt));
-            }
+            },
             OpenStmt::Else(exp, cstmt, ostmt) => {
                 match exp.ir(s, scope) {
                     ResultEnum::Reg(cnt) => s.push_str(&format!("  br %{}, %then_{}, %else_{}\n", cnt, blk_cnt, blk_cnt)),
@@ -381,13 +384,33 @@ impl OpenStmt {
                     },
                 }
                 s.push_str(&format!("\n%then_{}:\n", blk_cnt));
-                cstmt.ir(s, scope)?;
+                cstmt.ir(s, scope, c)?;
                 s.push_str(&format!("  jump %end_{}\n", blk_cnt));
                 s.push_str(&format!("\n%else_{}:\n", blk_cnt));
-                ostmt.ir(s, scope)?;
+                ostmt.ir(s, scope, c)?;
                 s.push_str(&format!("  jump %end_{}\n", blk_cnt));
                 s.push_str(&format!("\n%end_{}:\n", blk_cnt));
-            }
+            },
+            OpenStmt::While(exp, ostmt) => unsafe {
+                let blk_cnt = BLK_CNT;
+                BLK_CNT += 1;
+
+                s.push_str(&format!("  jump %while_entry_{}\n", blk_cnt));
+                s.push_str(&format!("\n%while_entry_{}:\n", blk_cnt));
+                match exp.ir(s, scope) {
+                    ResultEnum::Lit(value) => s.push_str(&format!("  br {}, %while_loop_{}, %while_end_{}\n", value, blk_cnt, blk_cnt)),
+                    ResultEnum::Reg(cnt) => s.push_str(&format!("  br %{}, %while_loop_{}, %while_end_{}\n", cnt, blk_cnt, blk_cnt)),
+                    ResultEnum::Mem(mem) => {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                        s.push_str(&format!("  br %{}, %while_loop_{}, %while_end_{}\n", CNT, blk_cnt, blk_cnt));
+                        CNT += 1;
+                    },
+                }
+                s.push_str(&format!("\n%while_loop_{}:\n", blk_cnt));
+                ostmt.ir(s, scope, Some(blk_cnt))?;
+                s.push_str(&format!("  jump %while_entry_{}\n", blk_cnt));
+                s.push_str(&format!("\n%while_end_{}:\n", blk_cnt));
+            },
         }
         Ok(())
     }
@@ -399,10 +422,13 @@ pub enum CloseStmt {
     Blk(Block),
     Ret(Exp),
     Else(Exp, Box<CloseStmt>, Box<CloseStmt>),
+    While(Exp, Box<CloseStmt>),
+    Break(),
+    Continue(),
 }
 
 impl CloseStmt {
-    fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>) -> io::Result<()> {
         match self {
             CloseStmt::Ass(lval, exp) => match &lval.get_value(scope).symbol {
                 SymbolEnum::Const(_value) => {
@@ -426,7 +452,7 @@ impl CloseStmt {
                 None => (),
             },
             CloseStmt::Blk(block) => {
-                block.ir(s, scope)?;
+                block.ir(s, scope, c)?;
             }
             CloseStmt::Ret(exp) => unsafe {
                 let result = exp.ir(s, scope);
@@ -460,13 +486,53 @@ impl CloseStmt {
                     },
                 }
                 s.push_str(&format!("\n%then_{}:\n", blk_cnt));
-                cstmt1.ir(s, scope)?;
+                cstmt1.ir(s, scope, c)?;
                 s.push_str(&format!("  jump %end_{}\n", blk_cnt));
                 s.push_str(&format!("\n%else_{}:\n", blk_cnt));
-                cstmt2.ir(s, scope)?;
+                cstmt2.ir(s, scope, c)?;
                 s.push_str(&format!("  jump %end_{}\n", blk_cnt));
                 s.push_str(&format!("\n%end_{}:\n", blk_cnt));
-            }
+            },
+            CloseStmt::While(exp, cstmt) => unsafe {
+                let blk_cnt = BLK_CNT;
+                BLK_CNT += 1;
+
+                s.push_str(&format!("  jump %while_entry_{}\n", blk_cnt));
+                s.push_str(&format!("\n%while_entry_{}:\n", blk_cnt));
+                match exp.ir(s, scope) {
+                    ResultEnum::Lit(value) => s.push_str(&format!("  br {}, %while_loop_{}, %while_end_{}\n", value, blk_cnt, blk_cnt)),
+                    ResultEnum::Reg(cnt) => s.push_str(&format!("  br %{}, %while_loop_{}, %while_end_{}\n", cnt, blk_cnt, blk_cnt)),
+                    ResultEnum::Mem(mem) => {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                        s.push_str(&format!("  br %{}, %while_loop_{}, %while_end_{}\n", CNT, blk_cnt, blk_cnt));
+                        CNT += 1;
+                    },
+                }
+                s.push_str(&format!("\n%while_loop_{}:\n", blk_cnt));
+                cstmt.ir(s, scope, Some(blk_cnt))?;
+                s.push_str(&format!("  jump %while_entry_{}\n", blk_cnt));
+                s.push_str(&format!("\n%while_end_{}:\n", blk_cnt));
+            },
+            CloseStmt::Break() => {
+                match c {
+                    Some(blk_cnt) => unsafe {
+                        s.push_str(&format!("  jump %while_end_{}\n", blk_cnt));
+                        s.push_str(&format!("\n%while_break_{}:\n", BREAK_CNT));
+                        BREAK_CNT += 1;
+                    },
+                    None => panic!("use of break in none loop statement!"),
+                }
+            },
+            CloseStmt::Continue() => {
+                match c {
+                    Some(blk_cnt) => unsafe {
+                        s.push_str(&format!("  jump %while_entry_{}\n", blk_cnt));
+                        s.push_str(&format!("\n%while_continue_{}:\n", CONTINUE_CNT));
+                        CONTINUE_CNT += 1;
+                    },
+                    None => panic!("use of continue in none loop statement!"),
+                }
+            },
         };
         Ok(())
     }

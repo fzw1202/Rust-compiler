@@ -64,6 +64,7 @@ Stmt: Stmt = {
 OpenStmt: OpenStmt = {
     "if" "(" <exp: Exp> ")" <stmt: Stmt> => OpenStmt::If(exp, Box::new(stmt)),
     "if" "(" <exp: Exp> ")" <cstmt: CloseStmt> "else" <ostmt: OpenStmt> => OpenStmt::Else(exp, cstmt, Box::new(ostmt)),
+    "while" "(" <exp: Exp> ")" <ostmt: OpenStmt> => OpenStmt::While(exp, Box::new(ostmt)),
 }
 
 CloseStmt: CloseStmt = {
@@ -72,6 +73,9 @@ CloseStmt: CloseStmt = {
     <blk: Block> => CloseStmt::Blk(<>),
     "return" <exp: Exp> ";" => CloseStmt::Ret(<>),
     "if" "(" <exp: Exp> ")" <cstmt1: CloseStmt> "else" <cstmt2: CloseStmt> => CloseStmt::Else(exp, Box::new(cstmt1), Box::new(cstmt2)),
+    "while" "(" <exp: Exp> ")" <cstmt: CloseStmt> => CloseStmt::While(exp, Box::new(cstmt)),
+    "break" ";" => CloseStmt::Break(),
+    "continue" ";" => CloseStmt::Continue(),
 }
 
 ConstExp: ConstExp = <exp: Exp> => ConstExp {<>};
