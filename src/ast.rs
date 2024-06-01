@@ -140,6 +140,7 @@ impl FuncDef {
 
         let mut hashmap = HashMap::new();
         let (args, ss) = self.args(&mut hashmap);
+        println!("ss: {}", ss);
         s.push_str(&format!("fun @{}({}){} {{\n", self.ident, args, self.func_type.ir()));
         s.push_str("%entry:\n");
 
@@ -157,6 +158,7 @@ impl FuncDef {
                 }
             },
             FuncType::Void => {
+                s.push_str(&ss);
                 self.block.ir(s, scope, None, Some(hashmap))?;
                 s.push_str("  ret\n");
             },
