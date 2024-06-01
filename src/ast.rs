@@ -496,13 +496,11 @@ impl VarDef {
 
     fn global_symbol(&self, scope: &mut Scopes, t: &BType) -> io::Result<()> {
         match self {
-            VarDef::Def(name) => unsafe {
-                scope.symbols[0].insert(name.to_string(), Symbol::new_var(Some(t.clone()), format!("@{}_{}", name, VAR_CNT)));
-                VAR_CNT += 1;
+            VarDef::Def(name) => {
+                scope.symbols[0].insert(name.to_string(), Symbol::new_var(Some(t.clone()), format!("@{}", name)));
             },
-            VarDef::Ass(name, _initval) => unsafe {
-                scope.symbols[0].insert(name.to_string(), Symbol::new_var(Some(t.clone()), format!("@{}_{}", name, VAR_CNT)));
-                VAR_CNT += 1;
+            VarDef::Ass(name, _initval) => {
+                scope.symbols[0].insert(name.to_string(), Symbol::new_var(Some(t.clone()), format!("@{}", name)));
             },
         };
         Ok(())
@@ -513,7 +511,7 @@ impl VarDef {
             VarDef::Def(name) => {
                 let varname = scope.symbols[0].get(name).unwrap();
                 match &varname.symbol {
-                    SymbolEnum::Var(n) => s.push_str(&format!("global {} = alloc {}, zeroinit\n", &n, t.name())),
+                    SymbolEnum::Var(n) => s.push_str(&format!("global {} = alloc {}, zeroinit\n\n", &n, t.name())),
                     _ => (),
                 };
             }
@@ -522,7 +520,7 @@ impl VarDef {
                 match varname.symbol {
                     SymbolEnum::Var(n) => {
                         let result = initval.global(scope);
-                        s.push_str(&format!("global {} = alloc {}, {}\n", &n, t.name(), result));
+                        s.push_str(&format!("global {} = alloc {}, {}\n\n", &n, t.name(), result));
                     }
                     _ => (),
                 };
