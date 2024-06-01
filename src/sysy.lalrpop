@@ -9,13 +9,40 @@ match {
   	_
 }
 
-pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit {<>};
+pub CompUnit: CompUnit = <global: (Global)*> => CompUnit {<>};
 
-FuncDef: FuncDef = {
-    <func_type: FuncType> <ident: Ident> "(" ")" <block: Block> => FuncDef {<>}
+Global: Global = {
+    Decl => Global::Decl(<>),
+    FuncDef => Global::Func(<>),
 }
 
-FuncType: FuncType = "int" => FuncType::Int;
+FuncDef: FuncDef = {
+    <head: FuncDefHead> ")" <block: Block> => {
+        FuncDef { func_type: head.0, ident: head.1, params: None, block }
+    },
+    <head: FuncDefHead> <fparams: FuncFParams> ")" <block: Block> => {
+        FuncDef { func_type: head.0, ident: head.1, params: Some(fparams), block }
+    },
+}
+
+FuncDefHead: (FuncType, String) = {
+    "int" <id: Ident> "(" => (FuncType::Int, <>),
+    "void" <id: Ident> "(" => (FuncType::Void, <>),
+}
+
+FuncType: FuncType = {
+    "int"  => FuncType::Int,
+    "void" => FuncType::Void,
+}
+
+FuncFParams: FuncFParams = {
+    <param: FuncFParam> <mut params: ("," <FuncFParam>)*> => {
+        params.insert(0, param);
+        FuncFParams { params }
+    }
+};
+
+FuncFParam: FuncFParam = <btype: BType> <ident: Ident> => FuncFParam {<>};
 
 Block: Block = "{" <bitems: (<BlockItem>)*> "}" => Block {<>};
 
@@ -36,14 +63,14 @@ ConstDecl: ConstDecl = {
     },
 }
 
+BType: BType = "int" => BType::INT;
+
 VarDecl: VarDecl = {
-    <btype: BType> <vdef: VarDef> <mut vdefs: ("," <VarDef>)*> ";" => {
+    "int" <vdef: VarDef> <mut vdefs: ("," <VarDef>)*> ";" => {
         vdefs.insert(0, vdef);
-        VarDecl { btype, vdefs }
+        VarDecl { btype: BType::INT, vdefs }
     },
 }
-
-BType: BType = "int" => BType::INT;
 
 ConstDef: ConstDef = <ident: Ident> "=" <cinitval: ConstInitVal> => ConstDef {<>};
 
@@ -95,6 +122,14 @@ Number: i32 = <num: IntConst> => <>;
 UnaryExp: UnaryExp = {
   	PrimaryExp => UnaryExp::Primary(<>),
   	<op: UnaryOp> <exp: UnaryExp> => UnaryExp::Unary(op, Box::new(exp)),
+    <ident: Ident> "(" <rparams: (FuncRParams)?> ")" => UnaryExp::Func(<>),
+}
+
+FuncRParams: FuncRParams = {
+    <exp: Exp> <mut exps: ("," <Exp>)*> => {
+        exps.insert(0, exp);
+        FuncRParams { exps }
+    }
 }
 
 UnaryOp: UnaryOp = {
