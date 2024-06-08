@@ -5,8 +5,11 @@ pub enum SymbolEnum {
     Const(i32),
     Var(String),
     Func(String),
+    Arr(String, i32, Vec<ResultEnum>),
+    ArrPtr(String, i32, Vec<ResultEnum>),
 }
 
+#[derive(Clone)]
 pub enum ResultEnum {
     Lit(i32),
     Reg(i32),
@@ -39,11 +42,24 @@ impl Symbol {
         let fty = match t {
             FuncType::Int => Some(BType::INT),
             FuncType::Void => None,
-            FuncType::Arr => None,
         };
         Self {
             ty: fty,
             symbol: SymbolEnum::Func(name),
+        }
+    }
+
+    fn new_arr(t: Option<BType>, name: String, dim: i32, index: Vec<ResultEnum>) -> Self {
+        Self {
+            ty: t,
+            symbol: SymbolEnum::Arr(name, dim, index),
+        }
+    }
+
+    fn new_arrptr(t: Option<BType>, name: String, dim: i32, index: Vec<ResultEnum>) -> Self {
+        Self {
+            ty: t,
+            symbol: SymbolEnum::ArrPtr(name, dim, index),
         }
     }
 }
@@ -85,7 +101,7 @@ impl CompUnit {
 
         scope.symbols[0].insert("getint".to_string(), Symbol::new_func(FuncType::Int, "@getint".to_string()));
         scope.symbols[0].insert("getch".to_string(), Symbol::new_func(FuncType::Int, "@getch".to_string()));
-        scope.symbols[0].insert("getarray".to_string(), Symbol::new_func(FuncType::Arr, "@getarray".to_string()));
+        scope.symbols[0].insert("getarray".to_string(), Symbol::new_func(FuncType::Int, "@getarray".to_string()));
         scope.symbols[0].insert("putint".to_string(), Symbol::new_func(FuncType::Void, "@putint".to_string()));
         scope.symbols[0].insert("putch".to_string(), Symbol::new_func(FuncType::Void, "@putch".to_string()));
         scope.symbols[0].insert("putarray".to_string(), Symbol::new_func(FuncType::Void, "@putarray".to_string()));
@@ -109,10 +125,10 @@ impl Global {
         match self {
             Global::Decl(decl) => {
                 decl.global_ir(s, scope)?;
-            },
+            }
             Global::Func(fdef) => {
                 fdef.ir(s, scope)?;
-            },
+            }
         }
         Ok(())
     }
@@ -126,21 +142,21 @@ pub struct FuncDef {
 }
 
 impl FuncDef {
-    fn args(&self, hashmap: &mut HashMap<String, Symbol>) -> (String, String) {
+    fn args(&self, s: &mut String, scope: &mut Scopes, hashmap: &mut HashMap<String, Symbol>) -> (String, String) {
         match &self.params {
-            Some(fparams) => {
-                fparams.args(hashmap)
-            },
+            Some(fparams) => fparams.args(s, scope, hashmap),
             None => ("".to_string(), "".to_string()),
         }
     }
 
     fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
-        scope.symbols[0].insert(self.ident.clone(), Symbol::new_func(self.func_type.clone(), format!("@{}", self.ident.clone())));
+        scope.symbols[0].insert(
+            self.ident.clone(),
+            Symbol::new_func(self.func_type.clone(), format!("@{}", self.ident.clone())),
+        );
 
         let mut hashmap = HashMap::new();
-        let (args, ss) = self.args(&mut hashmap);
-        println!("ss: {}", ss);
+        let (args, ss) = self.args(s, scope, &mut hashmap);
         s.push_str(&format!("fun @{}({}){} {{\n", self.ident, args, self.func_type.ir()));
         s.push_str("%entry:\n");
 
@@ -156,14 +172,13 @@ impl FuncDef {
                     s.push_str(&format!("  ret %{}\n", CNT));
                     CNT += 1;
                 }
-            },
+            }
             FuncType::Void => {
                 s.push_str(&ss);
                 self.block.ir(s, scope, None, Some(hashmap))?;
+                s.push_str("  jump %end\n");
+                s.push_str("\n%end:\n");
                 s.push_str("  ret\n");
-            },
-            FuncType::Arr => {
-                ()
             }
         }
         s.push_str("}\n\n");
@@ -175,7 +190,6 @@ impl FuncDef {
 pub enum FuncType {
     Int,
     Void,
-    Arr,
 }
 
 impl FuncType {
@@ -183,7 +197,6 @@ impl FuncType {
         match self {
             FuncType::Int => ": i32".to_string(),
             FuncType::Void => "".to_string(),
-            FuncType::Arr => ": i32*".to_string(),
         }
     }
 }
@@ -193,8 +206,8 @@ pub struct FuncFParams {
 }
 
 impl FuncFParams {
-    fn args(&self, hashmap: &mut HashMap<String, Symbol>) -> (String, String) {
-        let mut s = String::new();
+    fn args(&self, s: &mut String, scope: &mut Scopes, hashmap: &mut HashMap<String, Symbol>) -> (String, String) {
+        let mut ss = String::new();
         let mut args = String::new();
         let mut first = true;
 
@@ -204,35 +217,66 @@ impl FuncFParams {
             } else {
                 args.push_str(", ");
             }
-
-            let (name, ty) = p.ir();
-            args.push_str(&format!("{} :{}", name, ty));
-            
-            unsafe {
-                let var_cnt = VAR_CNT;
-                VAR_CNT += 1;
-                let mem = format!("@{}_{}", p.ident, var_cnt);
-
-                s.push_str(&format!("  {} = alloc i32\n", mem));
-                s.push_str(&format!("  store {}, {}\n", name, mem));
-                hashmap.insert(p.ident.clone(), Symbol::new_var(Some(p.btype.clone()), mem.clone()));
+            let (name, ty) = p.ir(s, scope);
+            args.push_str(&format!("{}: {}", name, ty));
+            match &p {
+                FuncFParam::Var(btype, ident) => unsafe {
+                    let var_cnt = VAR_CNT;
+                    VAR_CNT += 1;
+                    let mem = format!("@{}_{}", ident, var_cnt);
+    
+                    ss.push_str(&format!("  {} = alloc {}\n", mem, ty));
+                    ss.push_str(&format!("  store {}, {}\n", name, mem));
+                    hashmap.insert(ident.clone(), Symbol::new_var(Some(btype.clone()), mem.clone()));
+                },
+                FuncFParam::Arr(btype, ident, index) => unsafe {
+                    let var_cnt = VAR_CNT;
+                    VAR_CNT += 1;
+                    let mem = format!("@{}_{}", ident, var_cnt);
+    
+                    ss.push_str(&format!("  {} = alloc {}\n", mem, ty));
+                    ss.push_str(&format!("  store {}, {}\n", name, mem));
+                    hashmap.insert(ident.clone(), Symbol::new_arrptr(Some(btype.clone()), mem.clone(), (index.len() as i32) + 1,  Vec::new()));
+                },
             }
         }
-        (args, s)
+        (args, ss)
     }
 }
 
-pub struct FuncFParam {
-    pub btype: BType,
-    pub ident: String,
+pub enum FuncFParam {
+    Var(BType, String),
+    Arr(BType, String, Vec<ConstExp>),
 }
 
 impl FuncFParam {
-    fn ir(&self) -> (String, String) {
+    fn ty(&self, t: &BType, value: &Vec<i32>) -> String {
+        let mut ty;
+        if value.len() == 0 {
+            ty = "*i32".to_string();
+        } else {
+            ty = "*".to_owned() + &"[".repeat(value.len()) + &t.name();
+            for i in (0..value.len()).rev() {
+                ty += &format!(", {}]", value[i]);
+            }
+        }
+        ty
+    }
+
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> (String, String) {
         unsafe {
             let cnt = CNT;
             CNT += 1;
-            (format!("%{}", cnt), self.btype.name())
+            match &self {
+                FuncFParam::Var(btype, _) => (format!("%{}", cnt), btype.name()),
+                FuncFParam::Arr(btype, _, cexps) => {
+                    let mut value = vec![0; cexps.len()];
+                    for i in 0..cexps.len() {
+                        value[i] = cexps[i].symbol(s, scope);
+                    }
+                    (format!("%{}", cnt), self.ty(btype, &value))
+                }
+            }
         }
     }
 }
@@ -279,9 +323,7 @@ pub struct Block {
 impl Block {
     fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>, args: Option<HashMap<String, Symbol>>) -> io::Result<()> {
         match args {
-            Some(hashmap) => {
-                scope.symbols.push(hashmap)
-            },
+            Some(hashmap) => scope.symbols.push(hashmap),
             None => scope.symbols.push(HashMap::new()),
         }
         for bitem in &self.bitems {
@@ -313,35 +355,35 @@ pub enum Decl {
 }
 
 impl Decl {
-    fn symbol(&self, scope: &mut Scopes) -> io::Result<()> {
+    fn symbol(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
         match self {
-            Decl::Const(cdecl) => cdecl.symbol(scope)?,
+            Decl::Const(cdecl) => cdecl.symbol(s, scope)?,
             Decl::Var(vdecl) => vdecl.symbol(scope)?,
         };
         Ok(())
     }
 
     fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
-        self.symbol(scope)?;
+        self.symbol(s, scope)?;
         match self {
-            Decl::Const(_cdecl) => (),
+            Decl::Const(cdecl) => cdecl.ir(s, scope)?,
             Decl::Var(vdecl) => vdecl.ir(s, scope)?,
         };
         Ok(())
     }
 
-    fn global_symbol(&self, scope: &mut Scopes) -> io::Result<()> {
+    fn global_symbol(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
         match self {
-            Decl::Const(cdecl) => cdecl.global_symbol(scope)?,
+            Decl::Const(cdecl) => cdecl.global_symbol(s, scope)?,
             Decl::Var(vdecl) => vdecl.global_symbol(scope)?,
         };
         Ok(())
     }
 
     fn global_ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
-        self.global_symbol(scope)?;
+        self.global_symbol(s, scope)?;
         match self {
-            Decl::Const(_cdecl) => (),
+            Decl::Const(cdecl) => cdecl.global_ir(s, scope)?,
             Decl::Var(vdecl) => vdecl.global_ir(s, scope)?,
         };
         Ok(())
@@ -354,16 +396,30 @@ pub struct ConstDecl {
 }
 
 impl ConstDecl {
-    fn symbol(&self, scope: &mut Scopes) -> io::Result<()> {
+    fn symbol(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
         for cdef in &self.cdefs {
-            cdef.symbol(scope, &self.btype)?;
+            cdef.symbol(s, scope, &self.btype)?;
         }
         Ok(())
     }
 
-    fn global_symbol(&self, scope: &mut Scopes) -> io::Result<()> {
+    fn global_symbol(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
         for cdef in &self.cdefs {
-            cdef.global_symbol(scope, &self.btype)?;
+            cdef.global_symbol(s, scope, &self.btype)?;
+        }
+        Ok(())
+    }
+
+    fn ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
+        for cdef in &self.cdefs {
+            cdef.ir(s, scope, &self.btype)?;
+        }
+        Ok(())
+    }
+
+    fn global_ir(&self, s: &mut String, scope: &mut Scopes) -> io::Result<()> {
+        for cdef in &self.cdefs {
+            cdef.global_ir(s, scope, &self.btype)?;
         }
         Ok(())
     }
@@ -419,90 +475,388 @@ impl BType {
 
 pub struct ConstDef {
     pub ident: String,
+    pub cexps: Vec<ConstExp>,
     pub cinitval: ConstInitVal,
 }
 
 impl ConstDef {
-    fn symbol(&self, scope: &mut Scopes, t: &BType) -> io::Result<()> {
-        let value: i32 = self.cinitval.symbol(scope);
-        let len = scope.symbols.len() - 1;
-        scope.symbols[len].insert(self.ident.clone(), Symbol::new_const(Some(t.clone()), value));
+    fn symbol(&self, s: &mut String, scope: &mut Scopes, t: &BType) -> io::Result<()> {
+        match &self.cexps.len() {
+            0 => {
+                let value: i32 = self.cinitval.symbol(s, scope);
+                let len = scope.symbols.len() - 1;
+                scope.symbols[len].insert(self.ident.clone(), Symbol::new_const(Some(t.clone()), value));
+            }
+            _ => unsafe {
+                let len = scope.symbols.len() - 1;
+                scope.symbols[len].insert(
+                    self.ident.clone(),
+                    Symbol::new_arr(Some(t.clone()), format!("@{}_{}", self.ident.clone(), VAR_CNT), self.cexps.len() as i32,  Vec::new()),
+                );
+                VAR_CNT += 1;
+            },
+        }
         Ok(())
     }
 
-    fn global_symbol(&self, scope: &mut Scopes, t: &BType) -> io::Result<()> {
-        let value: i32 = self.cinitval.symbol(scope);
-        scope.symbols[0].insert(self.ident.clone(), Symbol::new_const(Some(t.clone()), value));
+    fn global_symbol(&self, s: &mut String, scope: &mut Scopes, t: &BType) -> io::Result<()> {
+        match &self.cexps.len() {
+            0 => {
+                let value: i32 = self.cinitval.symbol(s, scope);
+                scope.symbols[0].insert(self.ident.clone(), Symbol::new_const(Some(t.clone()), value));
+            }
+            _ => unsafe {
+                scope.symbols[0].insert(
+                    self.ident.clone(),
+                    Symbol::new_arr(Some(t.clone()), format!("@{}_{}", self.ident.clone(), VAR_CNT), self.cexps.len() as i32, Vec::new()),
+                );
+                VAR_CNT += 1;
+            },
+        }
+        Ok(())
+    }
+
+    fn ty(&self, t: &BType, value: &Vec<i32>) -> String {
+        let mut ty = "[".repeat(value.len()) + &t.name();
+        for i in (0..value.len()).rev() {
+            ty += &format!(", {}]", value[i]);
+        }
+        ty
+    }
+
+    fn init(&self, s: &mut String, value: &Vec<i32>, init: &Vec<i32>, arrname: &String, dim: i32, id: Vec<i32>) {
+        if dim as usize >= value.len() {
+            return;
+        }
+        for i in 0..value[dim as usize] {
+            let cnt;
+            unsafe {
+                cnt = CNT;
+                CNT += 1;
+            }
+            s.push_str(&format!("  %{} = getelemptr {}, {}\n", cnt, arrname, i));
+            if dim as usize == value.len() - 1 {
+                let mut num = 0;
+                for j in 0..value.len() {
+                    num *= value[j];
+                    if j == value.len() - 1 {
+                        num += i;
+                    } else {
+                        num += id[j];
+                    }
+                }
+                s.push_str(&format!("  store {}, %{}\n", init[num as usize], cnt));
+            } else {
+                let mut new_id = id.clone();
+                new_id[dim as usize] = i;
+                self.init(s, value, init, &format!("%{}", cnt), dim + 1, new_id);
+            }
+        }
+    }
+
+    fn init_str(&self, s: &mut String, value: &Vec<i32>, init: &Vec<i32>, dim: i32, id: Vec<i32>, first: bool) {
+        if dim as usize >= value.len() {
+            return;
+        }
+        if first {
+            s.push_str("{");
+        } else {
+            s.push_str(", {")
+        }
+        for i in 0..value[dim as usize] {
+            if dim as usize == value.len() - 1 {
+                let mut num = 0;
+                for j in 0..value.len() {
+                    num *= value[j];
+                    if j == value.len() - 1 {
+                        num += i;
+                    } else {
+                        num += id[j];
+                    }
+                }
+                if i == 0 {
+                    s.push_str(&format!("{}", init[num as usize]));
+                } else {
+                    s.push_str(&format!(", {}", init[num as usize]));
+                }
+            } else {
+                let mut new_id = id.clone();
+                new_id[dim as usize] = i;
+                self.init_str(s, value, init, dim + 1, new_id, i == 0);
+            }
+        }
+        s.push_str("}");
+    }
+
+    fn ir(&self, s: &mut String, scope: &mut Scopes, t: &BType) -> io::Result<()> {
+        let len = scope.symbols.len() - 1;
+        match &self.cexps.len() {
+            0 => (),
+            _ => {
+                let arr = scope.symbols[len].get(&self.ident).unwrap().clone();
+                let mut arrname = String::new();
+                if let SymbolEnum::Arr(name, _, _) = arr.symbol {
+                    arrname = name;
+                }
+                let mut value = vec![0; self.cexps.len()];
+                for i in 0..self.cexps.len() {
+                    value[i] = self.cexps[i].symbol(s, scope);
+                }
+                let mut init = Vec::new();
+                self.cinitval.arr_symbol(s, scope, value.clone(), &mut init);
+                let ty = self.ty(t, &value);
+                s.push_str(&format!("  {} = alloc {}\n", arrname, ty));
+                self.init(s, &value, &init, &arrname, 0, vec![0; value.len()]);
+            }
+        }
+        Ok(())
+    }
+
+    fn global_ir(&self, s: &mut String, scope: &mut Scopes, t: &BType) -> io::Result<()> {
+        match &self.cexps.len() {
+            0 => (),
+            _ => {
+                let arr = scope.symbols[0].get(&self.ident).unwrap().clone();
+                let mut arrname = String::new();
+                if let SymbolEnum::Arr(name, _, _) = arr.symbol {
+                    arrname = name;
+                }
+                let mut value = vec![0; self.cexps.len()];
+                for i in 0..self.cexps.len() {
+                    value[i] = self.cexps[i].symbol(s, scope);
+                }
+                let mut init = Vec::new();
+                self.cinitval.arr_symbol(s, scope, value.clone(), &mut init);
+                let ty = self.ty(t, &value);
+                let mut initval = String::new();
+                self.init_str(&mut initval, &value, &init, 0, vec![0; value.len()], true);
+                s.push_str(&format!("global {} = alloc {}, {}\n\n", arrname, ty, initval));
+            }
+        }
         Ok(())
     }
 }
 
 pub enum VarDef {
-    Def(String),
-    Ass(String, InitVal),
+    Def(String, Vec<ConstExp>),
+    Ass(String, Vec<ConstExp>, InitVal),
 }
 
 impl VarDef {
     fn symbol(&self, scope: &mut Scopes, t: &BType) -> io::Result<()> {
         let len = scope.symbols.len() - 1;
         match self {
-            VarDef::Def(name) => unsafe {
-                scope.symbols[len].insert(name.to_string(), Symbol::new_var(Some(t.clone()), format!("@{}_{}", name, VAR_CNT)));
-                VAR_CNT += 1;
+            VarDef::Def(name, cexps) => unsafe {
+                match &cexps.len() {
+                    0 => {
+                        scope.symbols[len]
+                            .insert(name.to_string(), Symbol::new_var(Some(t.clone()), format!("@{}_{}", name, VAR_CNT)));
+                        VAR_CNT += 1;
+                    }
+                    _ => {
+                        let len = scope.symbols.len() - 1;
+                        scope.symbols[len].insert(
+                            name.clone(),
+                            Symbol::new_arr(Some(t.clone()), format!("@{}_{}", name, VAR_CNT), cexps.len() as i32, Vec::new()),
+                        );
+                        VAR_CNT += 1;
+                    }
+                }
             },
-            VarDef::Ass(name, _initval) => unsafe {
-                scope.symbols[len].insert(name.to_string(), Symbol::new_var(Some(t.clone()), format!("@{}_{}", name, VAR_CNT)));
-                VAR_CNT += 1;
+            VarDef::Ass(name, cexps, _initval) => unsafe {
+                match &cexps.len() {
+                    0 => {
+                        scope.symbols[len]
+                            .insert(name.to_string(), Symbol::new_var(Some(t.clone()), format!("@{}_{}", name, VAR_CNT)));
+                        VAR_CNT += 1;
+                    }
+                    _ => {
+                        let len = scope.symbols.len() - 1;
+                        scope.symbols[len].insert(
+                            name.clone(),
+                            Symbol::new_arr(Some(t.clone()), format!("@{}_{}", name, VAR_CNT), cexps.len() as i32, Vec::new()),
+                        );
+                        VAR_CNT += 1;
+                    }
+                }
             },
         };
         Ok(())
     }
 
+    fn ty(&self, t: &BType, value: &Vec<i32>) -> String {
+        let mut ty = "[".repeat(value.len()) + &t.name();
+        for i in (0..value.len()).rev() {
+            ty += &format!(", {}]", value[i]);
+        }
+        ty
+    }
+
+    fn init(&self, s: &mut String, value: &Vec<i32>, init: &Vec<ResultEnum>, arrname: &String, dim: i32, id: Vec<i32>) {
+        if dim as usize >= value.len() {
+            return;
+        }
+        for i in 0..value[dim as usize] {
+            let cnt;
+            unsafe {
+                cnt = CNT;
+                CNT += 1;
+            }
+            s.push_str(&format!("  %{} = getelemptr {}, {}\n", cnt, arrname, i));
+            if dim as usize == value.len() - 1 {
+                let mut num = 0;
+                for j in 0..value.len() {
+                    num *= value[j];
+                    if j == value.len() - 1 {
+                        num += i;
+                    } else {
+                        num += id[j];
+                    }
+                }
+                match init[num as usize] {
+                    ResultEnum::Reg(regcnt) => {
+                        s.push_str(&format!("  store %{}, %{}\n", regcnt, cnt));
+                    }
+                    ResultEnum::Lit(value) => {
+                        s.push_str(&format!("  store {}, %{}\n", value, cnt));
+                    }
+                    ResultEnum::Mem(mem) => unsafe {
+                        s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                        s.push_str(&format!("  store %{}, %{}\n", CNT, cnt));
+                        CNT += 1;
+                    },
+                    ResultEnum::None() => panic!("no return value"),
+                };
+            } else {
+                let mut new_id = id.clone();
+                new_id[dim as usize] = i;
+                self.init(s, value, init, &format!("%{}", cnt), dim + 1, new_id);
+            }
+        }
+    }
+
+    fn init_str(&self, s: &mut String, value: &Vec<i32>, init: &Vec<i32>, dim: i32, id: Vec<i32>, first: bool) {
+        if dim as usize >= value.len() {
+            return;
+        }
+        if first {
+            s.push_str("{");
+        } else {
+            s.push_str(", {")
+        }
+        for i in 0..value[dim as usize] {
+            if dim as usize == value.len() - 1 {
+                let mut num = 0;
+                for j in 0..value.len() {
+                    num *= value[j];
+                    if j == value.len() - 1 {
+                        num += i;
+                    } else {
+                        num += id[j];
+                    }
+                }
+                if i == 0 {
+                    s.push_str(&format!("{}", init[num as usize]));
+                } else {
+                    s.push_str(&format!(", {}", init[num as usize]));
+                }
+            } else {
+                let mut new_id = id.clone();
+                new_id[dim as usize] = i;
+                self.init_str(s, value, init, dim + 1, new_id, i == 0);
+            }
+        }
+        s.push_str("}");
+    }
+
     fn ir(&self, s: &mut String, scope: &mut Scopes, t: &BType) -> io::Result<()> {
         let len = scope.symbols.len() - 1;
         match self {
-            VarDef::Def(name) => {
-                let varname = scope.symbols[len].get(name).unwrap();
-                match &varname.symbol {
-                    SymbolEnum::Var(n) => s.push_str(&format!("  {} = alloc {}\n", &n, t.name())),
-                    _ => (),
-                };
-            }
-            VarDef::Ass(name, initval) => {
-                let varname = scope.symbols[len].get(name).unwrap().clone();
-                match varname.symbol {
-                    SymbolEnum::Var(n) => {
-                        let result = initval.ir(s, scope);
-                        s.push_str(&format!("  {} = alloc {}\n", &n, t.name()));
-                        match result {
-                            ResultEnum::Reg(cnt) => {
-                                s.push_str(&format!("  store %{}, {}\n", cnt, &n));
-                            }
-                            ResultEnum::Lit(value) => {
-                                s.push_str(&format!("  store {}, {}\n", value, &n));
-                            }
-                            ResultEnum::Mem(mem) => unsafe {
-                                s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
-                                s.push_str(&format!("  store %{}, {}\n", CNT, &n));
-                                CNT += 1;
-                            },
-                            ResultEnum::None() => panic!("no return value"),
-                        };
+            VarDef::Def(name, cexp) => match &cexp.len() {
+                0 => {
+                    let varname = scope.symbols[len].get(name).unwrap().clone();
+                    match varname.symbol {
+                        SymbolEnum::Var(n) => s.push_str(&format!("  {} = alloc {}\n", &n, t.name())),
+                        _ => (),
+                    };
+                }
+                _ => {
+                    let arr = scope.symbols[len].get(name).unwrap().clone();
+                    let mut arrname = String::new();
+                    if let SymbolEnum::Arr(name, _, _) = arr.symbol {
+                        arrname = name;
                     }
-                    _ => (),
-                };
-            }
+                    let mut value = vec![0; cexp.len()];
+                    for i in 0..cexp.len() {
+                        value[i] = cexp[i].symbol(s, scope);
+                    }
+                    let ty = self.ty(t, &value);
+                    s.push_str(&format!("  {} = alloc {}\n", arrname, ty));
+                }
+            },
+            VarDef::Ass(name, cexp, initval) => match &cexp.len() {
+                0 => {
+                    let varname = scope.symbols[len].get(name).unwrap().clone();
+                    match varname.symbol {
+                        SymbolEnum::Var(n) => {
+                            let result = initval.ir(s, scope);
+                            s.push_str(&format!("  {} = alloc {}\n", &n, t.name()));
+                            match result {
+                                ResultEnum::Reg(cnt) => {
+                                    s.push_str(&format!("  store %{}, {}\n", cnt, &n));
+                                }
+                                ResultEnum::Lit(value) => {
+                                    s.push_str(&format!("  store {}, {}\n", value, &n));
+                                }
+                                ResultEnum::Mem(mem) => unsafe {
+                                    s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                                    s.push_str(&format!("  store %{}, {}\n", CNT, &n));
+                                    CNT += 1;
+                                },
+                                ResultEnum::None() => panic!("no return value"),
+                            };
+                        }
+                        _ => (),
+                    };
+                }
+                _ => {
+                    let arr = scope.symbols[len].get(name).unwrap().clone();
+                    let mut arrname = String::new();
+                    if let SymbolEnum::Arr(name, _, _) = arr.symbol {
+                        arrname = name;
+                    }
+                    let mut value = vec![0; cexp.len()];
+                    for i in 0..cexp.len() {
+                        value[i] = cexp[i].symbol(s, scope);
+                    }
+                    let mut init = Vec::new();
+                    initval.arr_symbol(s, scope, value.clone(), &mut init);
+                    let ty = self.ty(t, &value);
+                    s.push_str(&format!("  {} = alloc {}\n", arrname, ty));
+                    self.init(s, &value, &init, &arrname, 0, vec![0; value.len()]);
+                }
+            },
         };
         Ok(())
     }
 
     fn global_symbol(&self, scope: &mut Scopes, t: &BType) -> io::Result<()> {
         match self {
-            VarDef::Def(name) => {
-                scope.symbols[0].insert(name.to_string(), Symbol::new_var(Some(t.clone()), format!("@{}", name)));
+            VarDef::Def(name, cexps) => match &cexps.len() {
+                0 => {
+                    scope.symbols[0].insert(name.to_string(), Symbol::new_var(Some(t.clone()), format!("@{}", name)));
+                }
+                _ => {
+                    scope.symbols[0].insert(name.to_string(), Symbol::new_arr(Some(t.clone()), format!("@{}", name), cexps.len() as i32, Vec::new()));
+                }
             },
-            VarDef::Ass(name, _initval) => {
-                scope.symbols[0].insert(name.to_string(), Symbol::new_var(Some(t.clone()), format!("@{}", name)));
+            VarDef::Ass(name, cexps, _initval) => match &cexps.len() {
+                0 => {
+                    scope.symbols[0].insert(name.to_string(), Symbol::new_var(Some(t.clone()), format!("@{}", name)));
+                }
+                _ => {
+                    scope.symbols[0].insert(name.to_string(), Symbol::new_arr(Some(t.clone()), format!("@{}", name), cexps.len() as i32, Vec::new()));
+                }
             },
         };
         Ok(())
@@ -510,49 +864,238 @@ impl VarDef {
 
     fn global_ir(&self, s: &mut String, scope: &mut Scopes, t: &BType) -> io::Result<()> {
         match self {
-            VarDef::Def(name) => {
-                let varname = scope.symbols[0].get(name).unwrap();
-                match &varname.symbol {
-                    SymbolEnum::Var(n) => s.push_str(&format!("global {} = alloc {}, zeroinit\n\n", &n, t.name())),
-                    _ => (),
-                };
-            }
-            VarDef::Ass(name, initval) => {
-                let varname = scope.symbols[0].get(name).unwrap().clone();
-                match varname.symbol {
-                    SymbolEnum::Var(n) => {
-                        let result = initval.global(scope);
-                        s.push_str(&format!("global {} = alloc {}, {}\n\n", &n, t.name(), result));
+            VarDef::Def(name, cexp) => match &cexp.len() {
+                0 => {
+                    let varname = scope.symbols[0].get(name).unwrap();
+                    match &varname.symbol {
+                        SymbolEnum::Var(n) => s.push_str(&format!("global {} = alloc {}, zeroinit\n\n", &n, t.name())),
+                        _ => (),
+                    };
+                }
+                _ => {
+                    let arr = scope.symbols[0].get(name).unwrap().clone();
+                    let mut arrname = String::new();
+                    if let SymbolEnum::Arr(name, _, _) = arr.symbol {
+                        arrname = name;
                     }
-                    _ => (),
-                };
-            }
+                    let mut value = vec![0; cexp.len()];
+                    for i in 0..cexp.len() {
+                        value[i] = cexp[i].symbol(s, scope);
+                    }
+                    let ty = self.ty(t, &value);
+                    s.push_str(&format!("global {} = alloc {}, zeroinit\n\n", arrname, ty));
+                }
+            },
+            VarDef::Ass(name, cexp, initval) => match &cexp.len() {
+                0 => {
+                    let varname = scope.symbols[0].get(name).unwrap().clone();
+                    match varname.symbol {
+                        SymbolEnum::Var(n) => {
+                            let result = initval.global(s, scope);
+                            s.push_str(&format!("global {} = alloc {}, {}\n\n", &n, t.name(), result));
+                        }
+                        _ => (),
+                    };
+                }
+                _ => {
+                    let arr = scope.symbols[0].get(name).unwrap().clone();
+                    let mut arrname = String::new();
+                    if let SymbolEnum::Arr(name, _, _) = arr.symbol {
+                        arrname = name;
+                    }
+                    let mut value = vec![0; cexp.len()];
+                    for i in 0..cexp.len() {
+                        value[i] = cexp[i].symbol(s, scope);
+                    }
+                    let mut init = Vec::new();
+                    initval.global_arr_symbol(s, scope, value.clone(), &mut init);
+                    let ty = self.ty(t, &value);
+                    let mut initval = String::new();
+                    self.init_str(&mut initval, &value, &init, 0, vec![0; value.len()], true);
+                    s.push_str(&format!("global {} = alloc {}, {}\n\n", arrname, ty, initval));
+                }
+            },
         };
         Ok(())
     }
 }
 
-pub struct ConstInitVal {
-    pub cexp: ConstExp,
+pub enum ConstInitVal {
+    Exp(ConstExp),
+    Arr(Vec<ConstInitVal>),
 }
 
 impl ConstInitVal {
-    fn symbol(&self, scope: &mut Scopes) -> i32 {
-        self.cexp.symbol(scope)
+    fn symbol(&self, s: &mut String, scope: &mut Scopes) -> i32 {
+        match self {
+            ConstInitVal::Exp(cexp) => cexp.symbol(s, scope),
+            ConstInitVal::Arr(_) => panic!("ConstInitVal: Wrong Type!"),
+        }
+    }
+
+    fn arr_symbol(&self, s: &mut String, scope: &mut Scopes, value: Vec<i32>, result: &mut Vec<i32>) {
+        match self {
+            ConstInitVal::Exp(_) => panic!("ConstInitVal: Wrong Type!"),
+            ConstInitVal::Arr(cinitvals) => {
+                let mut cnt = 0;
+                let mut sum = 1;
+                for i in 0..value.len() {
+                    sum *= value[i];
+                }
+                for i in 0..cinitvals.len() {
+                    match &cinitvals[i] {
+                        ConstInitVal::Exp(cexp) => {
+                            result.push(cexp.symbol(s, scope));
+                            cnt += 1;
+                        }
+                        ConstInitVal::Arr(_) => {
+                            if cnt % value.last().unwrap() == 0 {
+                                let mut check = 1;
+                                let mut index: usize = 0;
+                                for j in (0..value.len()).rev() {
+                                    check *= value[j];
+                                    if cnt % check == 0 {
+                                        continue;
+                                    } else {
+                                        index = j;
+                                        break;
+                                    }
+                                }
+                                let new_value = value[(index + 1)..].to_vec();
+                                cinitvals[i].arr_symbol(s, scope, new_value, result);
+                                check = 1;
+                                for k in (index + 1)..value.len() {
+                                    check *= value[k];
+                                }
+                                cnt += check;
+                            } else {
+                                panic!("ConstInitVal: Wrong Initialize");
+                            }
+                        }
+                    }
+                }
+                for _ in cnt..(sum + 1) {
+                    result.push(0);
+                }
+            }
+        }
     }
 }
 
-pub struct InitVal {
-    pub exp: Exp,
+pub enum InitVal {
+    Exp(Exp),
+    Arr(Vec<InitVal>),
 }
 
 impl InitVal {
-    fn global(&self, scope: &mut Scopes) -> i32 {
-        self.exp.symbol(scope)
+    fn global(&self, s: &mut String, scope: &mut Scopes) -> i32 {
+        match self {
+            InitVal::Exp(exp) => exp.symbol(s, scope),
+            InitVal::Arr(_) => panic!("InitVal: Wrong Type!"),
+        }
     }
 
     fn ir(&self, s: &mut String, scope: &mut Scopes) -> ResultEnum {
-        self.exp.ir(s, scope)
+        match self {
+            InitVal::Exp(exp) => exp.ir(s, scope),
+            InitVal::Arr(_) => panic!("InitVal: Wrong Type!"),
+        }
+    }
+
+    fn arr_symbol(&self, s: &mut String, scope: &mut Scopes, value: Vec<i32>, result: &mut Vec<ResultEnum>) {
+        match self {
+            InitVal::Exp(_) => panic!("InitVal: Wrong Type!"),
+            InitVal::Arr(initvals) => {
+                let mut cnt = 0;
+                let mut sum = 1;
+                for i in 0..value.len() {
+                    sum *= value[i];
+                }
+                for i in 0..initvals.len() {
+                    match &initvals[i] {
+                        InitVal::Exp(exp) => {
+                            result.push(exp.ir(s, scope));
+                            cnt += 1;
+                        }
+                        InitVal::Arr(_) => {
+                            if cnt % value.last().unwrap() == 0 {
+                                let mut check = 1;
+                                let mut index: usize = 0;
+                                for j in (0..value.len()).rev() {
+                                    check *= value[j];
+                                    if cnt % check == 0 {
+                                        continue;
+                                    } else {
+                                        index = j;
+                                        break;
+                                    }
+                                }
+                                let new_value = value[(index + 1)..].to_vec();
+                                initvals[i].arr_symbol(s, scope, new_value, result);
+                                check = 1;
+                                for k in (index + 1)..value.len() {
+                                    check *= value[k];
+                                }
+                                cnt += check;
+                            } else {
+                                panic!("InitVal: Wrong Initialize");
+                            }
+                        }
+                    }
+                }
+                for _ in cnt..(sum + 1) {
+                    result.push(ResultEnum::Lit(0));
+                }
+            }
+        }
+    }
+
+    fn global_arr_symbol(&self, s: &mut String, scope: &mut Scopes, value: Vec<i32>, result: &mut Vec<i32>) {
+        match self {
+            InitVal::Exp(_) => panic!("InitVal: Wrong Type!"),
+            InitVal::Arr(initvals) => {
+                let mut cnt = 0;
+                let mut sum = 1;
+                for i in 0..value.len() {
+                    sum *= value[i];
+                }
+                for i in 0..initvals.len() {
+                    match &initvals[i] {
+                        InitVal::Exp(exp) => {
+                            result.push(exp.symbol(s, scope));
+                            cnt += 1;
+                        }
+                        InitVal::Arr(_) => {
+                            if cnt % value.last().unwrap() == 0 {
+                                let mut check = 1;
+                                let mut index: usize = 0;
+                                for j in (0..value.len()).rev() {
+                                    check *= value[j];
+                                    if cnt % check == 0 {
+                                        continue;
+                                    } else {
+                                        index = j;
+                                        break;
+                                    }
+                                }
+                                let new_value = value[(index + 1)..].to_vec();
+                                initvals[i].global_arr_symbol(s, scope, new_value, result);
+                                check = 1;
+                                for k in (index + 1)..value.len() {
+                                    check *= value[k];
+                                }
+                                cnt += check;
+                            } else {
+                                panic!("InitVal: Wrong Initialize");
+                            }
+                        }
+                    }
+                }
+                for _ in cnt..(sum + 1) {
+                    result.push(0);
+                }
+            }
+        }
     }
 }
 pub struct ConstExp {
@@ -560,25 +1103,64 @@ pub struct ConstExp {
 }
 
 impl ConstExp {
-    fn symbol(&self, scope: &mut Scopes) -> i32 {
-        self.exp.symbol(scope)
+    fn symbol(&self, s: &mut String, scope: &mut Scopes) -> i32 {
+        self.exp.symbol(s, scope)
     }
 }
 
 pub struct LVal {
     pub ident: String,
+    pub exps: Vec<Exp>,
 }
 
 impl LVal {
-    fn get_value(&self, scope: &mut Scopes) -> Symbol {
-        let mut len = scope.symbols.len() - 1;
-        while len as i32 >= 0 {
-            if let Some(value) = scope.symbols[len].get(&self.ident) {
-                return value.clone();
+    fn get_value(&self, s: &mut String, scope: &mut Scopes) -> Symbol {
+        match &self.exps.len() {
+            0 => {
+                let mut len = scope.symbols.len() - 1;
+                while len as i32 >= 0 {
+                    if let Some(value) = scope.symbols[len].get(&self.ident) {
+                        return value.clone();
+                    }
+                    len -= 1;
+                }
+                panic!("can not find symbol: {}", &self.ident);
             }
-            len -= 1;
+            _ => {
+                let mut len = scope.symbols.len() - 1;
+                while len as i32 >= 0 {
+                    let mut v = None;
+                    if let Some(value) = scope.symbols[len].get_mut(&self.ident) {
+                        v = Some(value.clone());
+                    }
+                    match &mut v {
+                        None => {
+                            len -= 1;
+                            continue;
+                        }
+                        Some(v) => {
+                            match &mut v.symbol {
+                                SymbolEnum::Arr(_, _, vec) => {
+                                    vec.clear();
+                                    for i in 0..self.exps.len() {
+                                        vec.push(self.exps[i].ir(s, scope));
+                                    }
+                                },
+                                SymbolEnum::ArrPtr(_, _, vec) => {
+                                    vec.clear();
+                                    for i in 0..self.exps.len() {
+                                        vec.push(self.exps[i].ir(s, scope));
+                                    }
+                                }
+                                _ => panic!("LVal: Wrong type!"),
+                            }
+                            return v.clone();
+                        }
+                    }
+                }
+                panic!("can not find symbol: {}", &self.ident);
+            }
         }
-        panic!("can not find symbol: {}", &self.ident);
     }
 }
 
@@ -661,7 +1243,7 @@ impl OpenStmt {
                         s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
                         s.push_str(&format!("  br %{}, %while_loop_{}, %while_end_{}\n", CNT, blk_cnt, blk_cnt));
                         CNT += 1;
-                    },
+                    }
                     ResultEnum::None() => panic!("no return value"),
                 }
                 s.push_str(&format!("\n%while_loop_{}:\n", blk_cnt));
@@ -678,7 +1260,7 @@ pub enum CloseStmt {
     Ass(LVal, Exp),
     Exp(Option<Exp>),
     Blk(Block),
-    Ret(Exp),
+    Ret(Option<Exp>),
     Else(Exp, Box<CloseStmt>, Box<CloseStmt>),
     While(Exp, Box<CloseStmt>),
     Break(),
@@ -688,10 +1270,10 @@ pub enum CloseStmt {
 impl CloseStmt {
     fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>) -> io::Result<()> {
         match self {
-            CloseStmt::Ass(lval, exp) => match &lval.get_value(scope).symbol {
+            CloseStmt::Ass(lval, exp) => match &lval.get_value(s, scope).symbol {
                 SymbolEnum::Const(_value) => {
                     panic!("assignment for const value is not allowed!")
-                },
+                }
                 SymbolEnum::Var(name) => {
                     let result = exp.ir(s, scope);
                     match result {
@@ -702,6 +1284,97 @@ impl CloseStmt {
                             s.push_str(&format!("  store %{}, {}\n", CNT, name));
                             CNT += 1;
                         },
+                        ResultEnum::None() => panic!("no return value"),
+                    }
+                }
+                SymbolEnum::Arr(name, _, index) => unsafe {
+                    let mut n = String::from(name);
+                    match &index.len() {
+                        0 => panic!("CloseStmt: Wrong type!"),
+                        _ => {
+                            for i in 0..index.len() {
+                                match index[i] {
+                                    ResultEnum::Reg(cnt) => {
+                                        s.push_str(&format!("  %{} = getelemptr {}, %{}\n", CNT, n, cnt));
+                                        CNT += 1;
+                                    }
+                                    ResultEnum::Lit(value) => {
+                                        s.push_str(&format!("  %{} = getelemptr {}, {}\n", CNT, n, value));
+                                        CNT += 1;
+                                    }
+                                    ResultEnum::Mem(mem) => {
+                                        s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                                        s.push_str(&format!("  %{} = getelemptr {}, %{}\n", CNT + 1, n, CNT));
+                                        CNT += 2;
+                                    }
+                                    ResultEnum::None() => panic!("no return value"),
+                                }
+                                n = format!("%{}", CNT - 1);
+                            }
+                        }
+                    }
+                    let result = exp.ir(s, scope);
+                    match result {
+                        ResultEnum::Reg(cnt) => s.push_str(&format!("  store %{}, {}\n", cnt, n)),
+                        ResultEnum::Lit(value) => s.push_str(&format!("  store {}, {}\n", value, n)),
+                        ResultEnum::Mem(mem) => {
+                            s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                            s.push_str(&format!("  store %{}, {}\n", CNT, n));
+                            CNT += 1;
+                        }
+                        ResultEnum::None() => panic!("no return value"),
+                    }
+                },
+                SymbolEnum::ArrPtr(name, _, index) => unsafe {
+                    let mut n = String::from(name);
+                    match &index.len() {
+                        0 => panic!("CloseStmt: Wrong type!"),
+                        _ => {
+                            s.push_str(&format!("  %{} = load {}\n", CNT, n));
+                            CNT += 1;
+                            n = format!("%{}", CNT - 1);
+                            for i in 0..index.len() {
+                                match index[i] {
+                                    ResultEnum::Reg(cnt) => {
+                                        if i == 0 {
+                                            s.push_str(&format!("  %{} = getptr {}, %{}\n", CNT, n, cnt));
+                                        } else {
+                                            s.push_str(&format!("  %{} = getelemptr {}, %{}\n", CNT, n, cnt));
+                                        }
+                                        CNT += 1;
+                                    }
+                                    ResultEnum::Lit(value) => {
+                                        if i == 0 {
+                                            s.push_str(&format!("  %{} = getptr {}, {}\n", CNT, n, value));
+                                        } else {
+                                            s.push_str(&format!("  %{} = getelemptr {}, {}\n", CNT, n, value));
+                                        }
+                                        CNT += 1;
+                                    }
+                                    ResultEnum::Mem(mem) => {
+                                        s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                                        if i == 0 {
+                                            s.push_str(&format!("  %{} = getptr {}, %{}\n", CNT + 1, n, CNT));
+                                        } else {
+                                            s.push_str(&format!("  %{} = getelemptr {}, %{}\n", CNT + 1, n, CNT));
+                                        }
+                                        CNT += 2;
+                                    }
+                                    ResultEnum::None() => panic!("no return value"),
+                                }
+                                n = format!("%{}", CNT - 1);
+                            }
+                        }
+                    }
+                    let result = exp.ir(s, scope);
+                    match result {
+                        ResultEnum::Reg(cnt) => s.push_str(&format!("  store %{}, {}\n", cnt, n)),
+                        ResultEnum::Lit(value) => s.push_str(&format!("  store {}, {}\n", value, n)),
+                        ResultEnum::Mem(mem) => {
+                            s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                            s.push_str(&format!("  store %{}, {}\n", CNT, n));
+                            CNT += 1;
+                        }
                         ResultEnum::None() => panic!("no return value"),
                     }
                 },
@@ -715,21 +1388,30 @@ impl CloseStmt {
                 block.ir(s, scope, c, None)?;
             }
             CloseStmt::Ret(exp) => unsafe {
-                let result = exp.ir(s, scope);
-                match result {
-                    ResultEnum::Reg(cnt) => s.push_str(&format!("  store %{}, %ret\n", cnt)),
-                    ResultEnum::Lit(value) => s.push_str(&format!("  store {}, %ret\n", value)),
-                    ResultEnum::Mem(mem) => {
-                        s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
-                        s.push_str(&format!("  store %{}, %ret\n", CNT));
-                        CNT += 1;
+                match exp {
+                    Some(exp) => {
+                        let result = exp.ir(s, scope);
+                        match result {
+                            ResultEnum::Reg(cnt) => s.push_str(&format!("  store %{}, %ret\n", cnt)),
+                            ResultEnum::Lit(value) => s.push_str(&format!("  store {}, %ret\n", value)),
+                            ResultEnum::Mem(mem) => {
+                                s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                                s.push_str(&format!("  store %{}, %ret\n", CNT));
+                                CNT += 1;
+                            }
+                            ResultEnum::None() => panic!("no return value"),
+                        }
+        
+                        s.push_str(&format!("  jump %end\n"));
+                        s.push_str(&format!("\n%ret_{}:\n", RET_CNT));
+                        RET_CNT += 1;
                     },
-                    ResultEnum::None() => panic!("no return value"),
+                    None => {
+                        s.push_str(&format!("  jump %end\n"));
+                        s.push_str(&format!("\n%ret_{}:\n", RET_CNT));
+                        RET_CNT += 1;
+                    },
                 }
-
-                s.push_str(&format!("  jump %end\n"));
-                s.push_str(&format!("\n%ret_{}:\n", RET_CNT));
-                RET_CNT += 1;
             },
             CloseStmt::Else(exp, cstmt1, cstmt2) => {
                 let blk_cnt: i32;
@@ -770,7 +1452,7 @@ impl CloseStmt {
                         s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
                         s.push_str(&format!("  br %{}, %while_loop_{}, %while_end_{}\n", CNT, blk_cnt, blk_cnt));
                         CNT += 1;
-                    },
+                    }
                     ResultEnum::None() => panic!("no return value"),
                 }
                 s.push_str(&format!("\n%while_loop_{}:\n", blk_cnt));
@@ -804,8 +1486,8 @@ pub struct Exp {
 }
 
 impl Exp {
-    fn symbol(&self, scope: &mut Scopes) -> i32 {
-        self.loexp.symbol(scope)
+    fn symbol(&self, s: &mut String, scope: &mut Scopes) -> i32 {
+        self.loexp.symbol(s, scope)
     }
 
     fn ir(&self, s: &mut String, scope: &mut Scopes) -> ResultEnum {
@@ -820,15 +1502,21 @@ pub enum PrimaryExp {
 }
 
 impl PrimaryExp {
-    fn symbol(&self, scope: &mut Scopes) -> i32 {
+    fn symbol(&self, s: &mut String, scope: &mut Scopes) -> i32 {
         match self {
-            PrimaryExp::Exp(exp) => exp.symbol(scope),
+            PrimaryExp::Exp(exp) => exp.symbol(s, scope),
             PrimaryExp::Number(ref num) => *num,
-            PrimaryExp::LVal(lval) => match &lval.get_value(scope).symbol {
+            PrimaryExp::LVal(lval) => match &lval.get_value(s, scope).symbol {
                 SymbolEnum::Const(value) => *value,
-                SymbolEnum::Var(_name) => {
-                    panic!("can not use variables to assign const value!")
+                SymbolEnum::Var(_) => {
+                    panic!("PrimaryExp: can not use variables to assign const value!")
                 },
+                SymbolEnum::Arr(_, _, _) => {
+                    panic!("PrimaryExp: can not use array element to assign const value!")
+                },
+                SymbolEnum::ArrPtr(_, _, _) => {
+                    panic!("PrimaryExp: can not use array pointer to assign const value!")
+                }
                 _ => panic!("debug!"),
             },
         }
@@ -839,14 +1527,113 @@ impl PrimaryExp {
             PrimaryExp::Exp(exp) => exp.ir(s, scope),
             PrimaryExp::Number(num) => ResultEnum::Lit(*num),
             PrimaryExp::LVal(lval) => unsafe {
-                match &lval.get_value(scope).symbol {
+                match &lval.get_value(s, scope).symbol {
                     SymbolEnum::Const(value) => ResultEnum::Lit(*value),
                     SymbolEnum::Var(name) => {
                         s.push_str(&format!("  %{} = load {}\n", CNT, name));
                         CNT += 1;
                         ResultEnum::Reg(CNT - 1)
+                    }
+                    SymbolEnum::Arr(name, dim, index) => match &index.len() {
+                        0 => {
+                            s.push_str(&format!("  %{} = getelemptr {}, 0\n", CNT, name));
+                            CNT += 1;
+                            ResultEnum::Reg(CNT - 1)
+                        },
+                        _ => {
+                            let mut n = String::from(name);
+                            for i in 0..index.len() {
+                                match index[i] {
+                                    ResultEnum::Reg(cnt) => {
+                                        s.push_str(&format!("  %{} = getelemptr {}, %{}\n", CNT, n, cnt));
+                                        n = format!("%{}", CNT);
+                                        CNT += 1;
+                                    }
+                                    ResultEnum::Lit(value) => {
+                                        s.push_str(&format!("  %{} = getelemptr {}, {}\n", CNT, n, value));
+                                        n = format!("%{}", CNT);
+                                        CNT += 1;
+                                    }
+                                    ResultEnum::Mem(mem) => {
+                                        s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                                        s.push_str(&format!("  %{} = getelemptr {}, %{}\n", CNT + 1, n, CNT));
+                                        n = format!("%{}", CNT);
+                                        CNT += 2;
+                                    }
+                                    ResultEnum::None() => panic!("no return value"),
+                                }
+                            }
+                            if index.len() == *dim as usize {
+                                s.push_str(&format!("  %{} = load %{}\n", CNT, CNT - 1));
+                                CNT += 1;
+                                ResultEnum::Reg(CNT - 1)
+                            } else {
+                                s.push_str(&format!("  %{} = getelemptr {}, 0\n", CNT, n));
+                                CNT += 1;
+                                ResultEnum::Reg(CNT - 1)
+                            }
+                        }
                     },
-                    _ => panic!("wrong!"),
+                    SymbolEnum::ArrPtr(name, dim, index) => match &index.len() {
+                        0 => {
+                            let mut n = String::from(name);
+                            s.push_str(&format!("  %{} = load {}\n", CNT, n));
+                            CNT += 1;
+                            n = format!("%{}", CNT - 1);
+                            s.push_str(&format!("  %{} = getptr {}, 0\n", CNT, n));
+                            CNT += 1;
+                            ResultEnum::Reg(CNT - 1)
+                        },
+                        _ => {
+                            let mut n = String::from(name);
+                            s.push_str(&format!("  %{} = load {}\n", CNT, n));
+                            CNT += 1;
+                            n = format!("%{}", CNT - 1);
+                            for i in 0..index.len() {
+                                match index[i] {
+                                    ResultEnum::Reg(cnt) => {
+                                        if i == 0 {
+                                            s.push_str(&format!("  %{} = getptr {}, %{}\n", CNT, n, cnt));
+                                        } else {
+                                            s.push_str(&format!("  %{} = getelemptr {}, %{}\n", CNT, n, cnt));
+                                        }
+                                        n = format!("%{}", CNT);
+                                        CNT += 1;
+                                    }
+                                    ResultEnum::Lit(value) => {
+                                        if i == 0 {
+                                            s.push_str(&format!("  %{} = getptr {}, {}\n", CNT, n, value));
+                                        } else {
+                                            s.push_str(&format!("  %{} = getelemptr {}, {}\n", CNT, n, value));
+                                        }
+                                        n = format!("%{}", CNT);
+                                        CNT += 1;
+                                    }
+                                    ResultEnum::Mem(mem) => {
+                                        s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
+                                        if i == 0 {
+                                            s.push_str(&format!("  %{} = getptr {}, %{}\n", CNT + 1, n, CNT));
+                                        } else {
+                                            s.push_str(&format!("  %{} = getelemptr {}, %{}\n", CNT + 1, n, CNT));
+                                        }
+                                        n = format!("%{}", CNT);
+                                        CNT += 2;
+                                    }
+                                    ResultEnum::None() => panic!("no return value"),
+                                }
+                            }
+                            if index.len() == *dim as usize {
+                                s.push_str(&format!("  %{} = load %{}\n", CNT, CNT - 1));
+                                CNT += 1;
+                                ResultEnum::Reg(CNT - 1)
+                            } else {
+                                s.push_str(&format!("  %{} = getelemptr {}, 0\n", CNT, n));
+                                CNT += 1;
+                                ResultEnum::Reg(CNT - 1)
+                            }
+                        }
+                    },
+                    _ => panic!("PrimaryExp: wrong!"),
                 }
             },
         }
@@ -860,11 +1647,11 @@ pub enum UnaryExp {
 }
 
 impl UnaryExp {
-    fn symbol(&self, scope: &mut Scopes) -> i32 {
+    fn symbol(&self, s: &mut String, scope: &mut Scopes) -> i32 {
         match self {
-            UnaryExp::Primary(pexp) => pexp.symbol(scope),
+            UnaryExp::Primary(pexp) => pexp.symbol(s, scope),
             UnaryExp::Unary(uop, uexp) => {
-                let a = uexp.symbol(scope);
+                let a = uexp.symbol(s, scope);
                 match uop {
                     UnaryOp::Pos => a,
                     UnaryOp::Neg => -a,
@@ -890,7 +1677,7 @@ impl UnaryExp {
                                 s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
                                 s.push_str(&format!("  %{} = sub 0, %{}\n", CNT + 1, CNT));
                                 CNT += 1;
-                            },
+                            }
                             ResultEnum::None() => panic!("no return value"),
                         };
                         CNT += 1;
@@ -904,7 +1691,7 @@ impl UnaryExp {
                                 s.push_str(&format!("  %{} = load %{}\n", CNT, mem));
                                 s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 1, CNT));
                                 CNT += 1;
-                            },
+                            }
                             ResultEnum::None() => panic!("no return value"),
                         };
                         CNT += 1;
@@ -937,19 +1724,19 @@ impl UnaryExp {
                                         CNT += 1;
                                         s.push_str(&format!("  %{} = call {}({})\n", cnt, name, param));
                                         ResultEnum::Reg(cnt)
-                                    },
+                                    }
                                     None => {
                                         s.push_str(&format!("  call {}({})\n", name, param));
                                         ResultEnum::None()
-                                    },
+                                    }
                                 }
-                            },
+                            }
                             _ => panic!("can not find func symbol: {}", name),
                         }
                     },
                     None => panic!("can not find func symbol: {}", name),
                 }
-            },
+            }
         }
     }
 }
@@ -977,12 +1764,12 @@ pub enum MulExp {
 }
 
 impl MulExp {
-    fn symbol(&self, scope: &mut Scopes) -> i32 {
+    fn symbol(&self, s: &mut String, scope: &mut Scopes) -> i32 {
         match self {
-            MulExp::Unary(uexp) => uexp.symbol(scope),
+            MulExp::Unary(uexp) => uexp.symbol(s, scope),
             MulExp::Mul(mexp, mop, uexp) => {
-                let a: i32 = mexp.symbol(scope);
-                let b: i32 = uexp.symbol(scope);
+                let a: i32 = mexp.symbol(s, scope);
+                let b: i32 = uexp.symbol(s, scope);
                 match mop {
                     MulOp::Div => a / b,
                     MulOp::Mod => a % b,
@@ -1023,7 +1810,7 @@ impl MulExp {
                                     MulOp::Mul => s.push_str(&format!("  %{} = mul %{}, %{}\n", CNT + 1, lcnt, CNT)),
                                 };
                                 CNT += 1;
-                            },
+                            }
                             ResultEnum::None() => panic!("no return value"),
                         };
                     }
@@ -1051,7 +1838,7 @@ impl MulExp {
                                     MulOp::Mul => s.push_str(&format!("  %{} = mul {}, %{}\n", CNT + 1, lvalue, CNT)),
                                 };
                                 CNT += 1;
-                            },
+                            }
                             ResultEnum::None() => panic!("no return value"),
                         };
                     }
@@ -1082,10 +1869,10 @@ impl MulExp {
                                     MulOp::Mul => s.push_str(&format!("  %{} = mul %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
                                 };
                                 CNT += 2;
-                            },
+                            }
                             ResultEnum::None() => panic!("no return value"),
                         };
-                    },
+                    }
                     ResultEnum::None() => panic!("no return value"),
                 };
                 CNT += 1;
@@ -1101,12 +1888,12 @@ pub enum AddExp {
 }
 
 impl AddExp {
-    fn symbol(&self, scope: &mut Scopes) -> i32 {
+    fn symbol(&self, s: &mut String, scope: &mut Scopes) -> i32 {
         match self {
-            AddExp::Mul(mexp) => mexp.symbol(scope),
+            AddExp::Mul(mexp) => mexp.symbol(s, scope),
             AddExp::Add(aexp, aop, mexp) => {
-                let a: i32 = aexp.symbol(scope);
-                let b: i32 = mexp.symbol(scope);
+                let a: i32 = aexp.symbol(s, scope);
+                let b: i32 = mexp.symbol(s, scope);
                 match aop {
                     AddOp::Add => a + b,
                     AddOp::Sub => a - b,
@@ -1143,7 +1930,7 @@ impl AddExp {
                                     AddOp::Sub => s.push_str(&format!("  %{} = sub %{}, %{}\n", CNT + 1, lcnt, CNT)),
                                 };
                                 CNT += 1;
-                            },
+                            }
                             ResultEnum::None() => panic!("no return value"),
                         };
                     }
@@ -1168,7 +1955,7 @@ impl AddExp {
                                     AddOp::Sub => s.push_str(&format!("  %{} = sub {}, %{}\n", CNT + 1, lvalue, CNT)),
                                 };
                                 CNT += 1;
-                            },
+                            }
                             ResultEnum::None() => panic!("no return value"),
                         };
                     }
@@ -1196,10 +1983,10 @@ impl AddExp {
                                     AddOp::Sub => s.push_str(&format!("  %{} = sub %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
                                 };
                                 CNT += 2;
-                            },
+                            }
                             ResultEnum::None() => panic!("no return value"),
                         };
-                    },
+                    }
                     ResultEnum::None() => panic!("no return value"),
                 };
                 CNT += 1;
@@ -1222,12 +2009,12 @@ pub enum RelExp {
 }
 
 impl RelExp {
-    fn symbol(&self, scope: &mut Scopes) -> i32 {
+    fn symbol(&self, s: &mut String, scope: &mut Scopes) -> i32 {
         match self {
-            RelExp::Add(aexp) => aexp.symbol(scope),
+            RelExp::Add(aexp) => aexp.symbol(s, scope),
             RelExp::Rel(rexp, rop, aexp) => {
-                let a: i32 = rexp.symbol(scope);
-                let b: i32 = aexp.symbol(scope);
+                let a: i32 = rexp.symbol(s, scope);
+                let b: i32 = aexp.symbol(s, scope);
                 match rop {
                     RelOp::Less => (a < b) as i32,
                     RelOp::Greater => (a > b) as i32,
@@ -1271,7 +2058,7 @@ impl RelExp {
                                 RelOp::GreaterEq => s.push_str(&format!("  %{} = ge %{}, %{}\n", CNT + 1, lcnt, CNT)),
                             };
                             CNT += 1;
-                        },
+                        }
                         ResultEnum::None() => panic!("no return value"),
                     },
                     ResultEnum::Lit(lvalue) => match r {
@@ -1300,7 +2087,7 @@ impl RelExp {
                                 RelOp::GreaterEq => s.push_str(&format!("  %{} = ge {}, %{}\n", CNT + 1, lvalue, CNT)),
                             };
                             CNT += 1;
-                        },
+                        }
                         ResultEnum::None() => panic!("no return value"),
                     },
                     ResultEnum::Mem(lmem) => {
@@ -1333,10 +2120,10 @@ impl RelExp {
                                     RelOp::GreaterEq => s.push_str(&format!("  %{} = ge %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
                                 };
                                 CNT += 2;
-                            },
+                            }
                             ResultEnum::None() => panic!("no return value"),
                         };
-                    },
+                    }
                     ResultEnum::None() => panic!("no return value"),
                 }
                 CNT += 1;
@@ -1357,12 +2144,12 @@ pub enum EqExp {
 }
 
 impl EqExp {
-    fn symbol(&self, scope: &mut Scopes) -> i32 {
+    fn symbol(&self, s: &mut String, scope: &mut Scopes) -> i32 {
         match self {
-            EqExp::Rel(rexp) => rexp.symbol(scope),
+            EqExp::Rel(rexp) => rexp.symbol(s, scope),
             EqExp::Eq(eexp, eop, rexp) => {
-                let a: i32 = eexp.symbol(scope);
-                let b: i32 = rexp.symbol(scope);
+                let a: i32 = eexp.symbol(s, scope);
+                let b: i32 = rexp.symbol(s, scope);
                 match eop {
                     EqOp::Eq => (a == b) as i32,
                     EqOp::Neq => (a != b) as i32,
@@ -1394,7 +2181,7 @@ impl EqExp {
                                 EqOp::Neq => s.push_str(&format!("  %{} = ne %{}, %{}\n", CNT + 1, lcnt, CNT)),
                             };
                             CNT += 1;
-                        },
+                        }
                         ResultEnum::None() => panic!("no return value"),
                     },
                     ResultEnum::Lit(lvalue) => match r {
@@ -1413,7 +2200,7 @@ impl EqExp {
                                 EqOp::Neq => s.push_str(&format!("  %{} = ne {}, %{}\n", CNT + 1, lvalue, CNT)),
                             };
                             CNT += 1;
-                        },
+                        }
                         ResultEnum::None() => panic!("no return value"),
                     },
                     ResultEnum::Mem(lmem) => {
@@ -1440,10 +2227,10 @@ impl EqExp {
                                     EqOp::Neq => s.push_str(&format!("  %{} = ne %{}, %{}\n", CNT + 2, CNT, CNT + 1)),
                                 };
                                 CNT += 2;
-                            },
+                            }
                             ResultEnum::None() => panic!("no return value"),
                         };
-                    },
+                    }
                     ResultEnum::None() => panic!("no return value"),
                 }
                 CNT += 1;
@@ -1459,12 +2246,12 @@ pub enum LAndExp {
 }
 
 impl LAndExp {
-    fn symbol(&self, scope: &mut Scopes) -> i32 {
+    fn symbol(&self, s: &mut String, scope: &mut Scopes) -> i32 {
         match self {
-            LAndExp::Eq(eexp) => eexp.symbol(scope),
+            LAndExp::Eq(eexp) => eexp.symbol(s, scope),
             LAndExp::LAnd(laexp, eexp) => {
-                let a: i32 = laexp.symbol(scope);
-                let b: i32 = eexp.symbol(scope);
+                let a: i32 = laexp.symbol(s, scope);
+                let b: i32 = eexp.symbol(s, scope);
                 (a != 0 && b != 0) as i32
             }
         }
@@ -1489,7 +2276,7 @@ impl LAndExp {
                         s.push_str(&format!("  %{} = load %{}\n", CNT, lmem));
                         s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 1, CNT));
                         CNT += 1;
-                    },
+                    }
                     ResultEnum::None() => panic!("no return value"),
                 };
                 s.push_str(&format!("  br %{}, %land_rhs_{}, %land_end_{}\n", CNT, short_cnt, short_cnt));
@@ -1511,7 +2298,7 @@ impl LAndExp {
                         s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 1, CNT));
                         s.push_str(&format!("  store %{}, %{}\n", CNT + 1, cnt));
                         CNT += 1;
-                    },
+                    }
                     ResultEnum::None() => panic!("no return value"),
                 };
                 s.push_str(&format!("  jump %land_end_{}\n", short_cnt));
@@ -1529,12 +2316,12 @@ pub enum LOrExp {
 }
 
 impl LOrExp {
-    fn symbol(&self, scope: &mut Scopes) -> i32 {
+    fn symbol(&self, s: &mut String, scope: &mut Scopes) -> i32 {
         match self {
-            LOrExp::LAnd(laexp) => laexp.symbol(scope),
+            LOrExp::LAnd(laexp) => laexp.symbol(s, scope),
             LOrExp::LOr(loexp, laexp) => {
-                let a: i32 = loexp.symbol(scope);
-                let b: i32 = laexp.symbol(scope);
+                let a: i32 = loexp.symbol(s, scope);
+                let b: i32 = laexp.symbol(s, scope);
                 (a != 0 || b != 0) as i32
             }
         }
@@ -1559,7 +2346,7 @@ impl LOrExp {
                         s.push_str(&format!("  %{} = load %{}\n", CNT, lmem));
                         s.push_str(&format!("  %{} = eq %{}, 0\n", CNT + 1, CNT));
                         CNT += 1;
-                    },
+                    }
                     ResultEnum::None() => panic!("no return value"),
                 };
                 s.push_str(&format!("  br %{}, %lor_rhs_{}, %lor_end_{}\n", CNT, short_cnt, short_cnt));
@@ -1581,7 +2368,7 @@ impl LOrExp {
                         s.push_str(&format!("  %{} = ne %{}, 0\n", CNT + 1, CNT));
                         s.push_str(&format!("  store %{}, %{}\n", CNT + 1, cnt));
                         CNT += 1;
-                    },
+                    }
                     ResultEnum::None() => panic!("no return value"),
                 };
                 s.push_str(&format!("  jump %lor_end_{}\n", short_cnt));

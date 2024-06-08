@@ -42,7 +42,10 @@ FuncFParams: FuncFParams = {
     }
 };
 
-FuncFParam: FuncFParam = <btype: BType> <ident: Ident> => FuncFParam {<>};
+FuncFParam: FuncFParam = {
+    <btype: BType> <ident: Ident> => FuncFParam::Var(<>),
+    <btype: BType> <ident: Ident> "[" "]" <cexps: ("[" <ConstExp> "]")*> => FuncFParam::Arr(<>),
+}
 
 Block: Block = "{" <bitems: (<BlockItem>)*> "}" => Block {<>};
 
@@ -72,16 +75,32 @@ VarDecl: VarDecl = {
     },
 }
 
-ConstDef: ConstDef = <ident: Ident> "=" <cinitval: ConstInitVal> => ConstDef {<>};
-
-VarDef: VarDef = {
-    <ident: Ident> => VarDef::Def(<>),
-    <ident: Ident> "=" <initval: InitVal> => VarDef::Ass(<>),
+ConstDef: ConstDef = {
+    <ident: Ident> <cexps: ("[" <ConstExp> "]")*> "=" <cinitval: ConstInitVal> => ConstDef {<>},
 }
 
-ConstInitVal: ConstInitVal = <cexp: ConstExp> => ConstInitVal {<>};
+VarDef: VarDef = {
+    <ident: Ident> <cexps: ("[" <ConstExp> "]")*> => VarDef::Def(<>),
+    <ident: Ident> <cexps: ("[" <ConstExp> "]")*> "=" <initval: InitVal> => VarDef::Ass(<>),
+}
 
-InitVal: InitVal = <exp: Exp> => InitVal {<>};
+ConstInitVal: ConstInitVal = {
+    <cexp: ConstExp> => ConstInitVal::Exp(<>),
+    "{" "}" => ConstInitVal::Arr(Vec::new()),
+    "{" <cinitval: ConstInitVal> <mut cinitvals: ("," <ConstInitVal>)*> "}" => {
+        cinitvals.insert(0, cinitval);
+        ConstInitVal::Arr(cinitvals)
+    },
+}
+
+InitVal: InitVal = {
+    <exp: Exp> => InitVal::Exp(<>),
+    "{" "}" => InitVal::Arr(Vec::new()),
+    "{" <initval: InitVal> <mut initvals: ("," <InitVal>)*> "}" => {
+        initvals.insert(0, initval);
+        InitVal::Arr(initvals)
+    },
+}
 
 Stmt: Stmt = { 
     <ostmt: OpenStmt> => Stmt::Open(<>),
@@ -98,7 +117,7 @@ CloseStmt: CloseStmt = {
     <lval: LVal> "=" <exp: Exp> ";" => CloseStmt::Ass(<>),
     <exp: (Exp)?> ";" => CloseStmt::Exp(<>),
     <blk: Block> => CloseStmt::Blk(<>),
-    "return" <exp: Exp> ";" => CloseStmt::Ret(<>),
+    "return" <exp: (Exp)?> ";" => CloseStmt::Ret(<>),
     "if" "(" <exp: Exp> ")" <cstmt1: CloseStmt> "else" <cstmt2: CloseStmt> => CloseStmt::Else(exp, Box::new(cstmt1), Box::new(cstmt2)),
     "while" "(" <exp: Exp> ")" <cstmt: CloseStmt> => CloseStmt::While(exp, Box::new(cstmt)),
     "break" ";" => CloseStmt::Break(),
@@ -109,7 +128,9 @@ ConstExp: ConstExp = <exp: Exp> => ConstExp {<>};
 
 Exp: Exp = <loexp: LOrExp> => Exp {<>};
 
-LVal: LVal = <ident: Ident> => LVal {<>};
+LVal: LVal = {
+    <ident: Ident> <exps: ("[" <Exp> "]")*> => LVal {<>},
+}
 
 PrimaryExp: PrimaryExp = {
   	"(" <Exp> ")" => PrimaryExp::Exp(Box::new(<>)),
