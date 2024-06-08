@@ -33,7 +33,7 @@ fn main() -> Result<()> {
         println!("riscv");
         let driver = koopa::front::Driver::from(s);
         let program = driver.generate_program().unwrap();
-        std::fs::write(output, program.generate(None, None))?;
+        std::fs::write(output, program.generate(None, None, None, None))?;
     }
     Ok(())
 }

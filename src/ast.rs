@@ -164,9 +164,9 @@ impl FuncDef {
             FuncType::Int => {
                 s.push_str("  %ret = alloc i32\n");
                 s.push_str(&ss);
-                self.block.ir(s, scope, None, Some(hashmap))?;
-                s.push_str("  jump %end\n");
-                s.push_str("\n%end:\n");
+                self.block.ir(s, scope, None, Some(hashmap), Some(&self.ident))?;
+                s.push_str(&format!("  jump %end_{}\n", self.ident));
+                s.push_str(&format!("\n%end_{}:\n", self.ident));
                 unsafe {
                     s.push_str(&format!("  %{} = load %ret\n", CNT));
                     s.push_str(&format!("  ret %{}\n", CNT));
@@ -175,9 +175,9 @@ impl FuncDef {
             }
             FuncType::Void => {
                 s.push_str(&ss);
-                self.block.ir(s, scope, None, Some(hashmap))?;
-                s.push_str("  jump %end\n");
-                s.push_str("\n%end:\n");
+                self.block.ir(s, scope, None, Some(hashmap), Some(&self.ident))?;
+                s.push_str(&format!("  jump %end_{}\n", self.ident));
+                s.push_str(&format!("\n%end_{}:\n", self.ident));
                 s.push_str("  ret\n");
             }
         }
@@ -321,13 +321,13 @@ pub struct Block {
 }
 
 impl Block {
-    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>, args: Option<HashMap<String, Symbol>>) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>, args: Option<HashMap<String, Symbol>>, ident: Option<&String>) -> io::Result<()> {
         match args {
             Some(hashmap) => scope.symbols.push(hashmap),
             None => scope.symbols.push(HashMap::new()),
         }
         for bitem in &self.bitems {
-            bitem.ir(s, scope, c)?;
+            bitem.ir(s, scope, c, ident)?;
         }
         scope.symbols.pop();
         Ok(())
@@ -340,10 +340,10 @@ pub enum BlockItem {
 }
 
 impl BlockItem {
-    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>, ident: Option<&String>) -> io::Result<()> {
         match self {
             BlockItem::Dec(decl) => decl.ir(s, scope)?,
-            BlockItem::Stm(stmt) => stmt.ir(s, scope, c)?,
+            BlockItem::Stm(stmt) => stmt.ir(s, scope, c, ident)?,
         };
         Ok(())
     }
@@ -1170,10 +1170,10 @@ pub enum Stmt {
 }
 
 impl Stmt {
-    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>, ident: Option<&String>) -> io::Result<()> {
         match self {
-            Stmt::Open(ostmt) => ostmt.ir(s, scope, c),
-            Stmt::Close(cstmt) => cstmt.ir(s, scope, c),
+            Stmt::Open(ostmt) => ostmt.ir(s, scope, c, ident),
+            Stmt::Close(cstmt) => cstmt.ir(s, scope, c, ident),
         }
     }
 }
@@ -1185,7 +1185,7 @@ pub enum OpenStmt {
 }
 
 impl OpenStmt {
-    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>, ident: Option<&String>) -> io::Result<()> {
         let blk_cnt: i32;
         unsafe {
             blk_cnt = BLK_CNT;
@@ -1205,7 +1205,7 @@ impl OpenStmt {
                     ResultEnum::None() => panic!("no return value"),
                 }
                 s.push_str(&format!("\n%then_{}:\n", blk_cnt));
-                stmt.ir(s, scope, c)?;
+                stmt.ir(s, scope, c, ident)?;
                 s.push_str(&format!("  jump %end_{}\n", blk_cnt));
                 s.push_str(&format!("\n%end_{}:\n", blk_cnt));
             }
@@ -1221,10 +1221,10 @@ impl OpenStmt {
                     ResultEnum::None() => panic!("no return value"),
                 }
                 s.push_str(&format!("\n%then_{}:\n", blk_cnt));
-                cstmt.ir(s, scope, c)?;
+                cstmt.ir(s, scope, c, ident)?;
                 s.push_str(&format!("  jump %end_{}\n", blk_cnt));
                 s.push_str(&format!("\n%else_{}:\n", blk_cnt));
-                ostmt.ir(s, scope, c)?;
+                ostmt.ir(s, scope, c, ident)?;
                 s.push_str(&format!("  jump %end_{}\n", blk_cnt));
                 s.push_str(&format!("\n%end_{}:\n", blk_cnt));
             }
@@ -1247,7 +1247,7 @@ impl OpenStmt {
                     ResultEnum::None() => panic!("no return value"),
                 }
                 s.push_str(&format!("\n%while_loop_{}:\n", blk_cnt));
-                ostmt.ir(s, scope, Some(blk_cnt))?;
+                ostmt.ir(s, scope, Some(blk_cnt), ident)?;
                 s.push_str(&format!("  jump %while_entry_{}\n", blk_cnt));
                 s.push_str(&format!("\n%while_end_{}:\n", blk_cnt));
             },
@@ -1268,7 +1268,7 @@ pub enum CloseStmt {
 }
 
 impl CloseStmt {
-    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>) -> io::Result<()> {
+    fn ir(&self, s: &mut String, scope: &mut Scopes, c: Option<i32>, ident: Option<&String>) -> io::Result<()> {
         match self {
             CloseStmt::Ass(lval, exp) => match &lval.get_value(s, scope).symbol {
                 SymbolEnum::Const(_value) => {
@@ -1385,7 +1385,7 @@ impl CloseStmt {
                 None => (),
             },
             CloseStmt::Blk(block) => {
-                block.ir(s, scope, c, None)?;
+                block.ir(s, scope, c, None, ident)?;
             }
             CloseStmt::Ret(exp) => unsafe {
                 match exp {
@@ -1402,12 +1402,12 @@ impl CloseStmt {
                             ResultEnum::None() => panic!("no return value"),
                         }
         
-                        s.push_str(&format!("  jump %end\n"));
+                        s.push_str(&format!("  jump %end_{}\n", ident.unwrap()));
                         s.push_str(&format!("\n%ret_{}:\n", RET_CNT));
                         RET_CNT += 1;
                     },
                     None => {
-                        s.push_str(&format!("  jump %end\n"));
+                        s.push_str(&format!("  jump %end_{}\n", ident.unwrap()));
                         s.push_str(&format!("\n%ret_{}:\n", RET_CNT));
                         RET_CNT += 1;
                     },
@@ -1430,10 +1430,10 @@ impl CloseStmt {
                     ResultEnum::None() => panic!("no return value"),
                 }
                 s.push_str(&format!("\n%then_{}:\n", blk_cnt));
-                cstmt1.ir(s, scope, c)?;
+                cstmt1.ir(s, scope, c, ident)?;
                 s.push_str(&format!("  jump %end_{}\n", blk_cnt));
                 s.push_str(&format!("\n%else_{}:\n", blk_cnt));
-                cstmt2.ir(s, scope, c)?;
+                cstmt2.ir(s, scope, c, ident)?;
                 s.push_str(&format!("  jump %end_{}\n", blk_cnt));
                 s.push_str(&format!("\n%end_{}:\n", blk_cnt));
             }
@@ -1456,7 +1456,7 @@ impl CloseStmt {
                     ResultEnum::None() => panic!("no return value"),
                 }
                 s.push_str(&format!("\n%while_loop_{}:\n", blk_cnt));
-                cstmt.ir(s, scope, Some(blk_cnt))?;
+                cstmt.ir(s, scope, Some(blk_cnt), ident)?;
                 s.push_str(&format!("  jump %while_entry_{}\n", blk_cnt));
                 s.push_str(&format!("\n%while_end_{}:\n", blk_cnt));
             },
