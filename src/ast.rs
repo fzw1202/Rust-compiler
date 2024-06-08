@@ -974,7 +974,7 @@ impl ConstInitVal {
                         }
                     }
                 }
-                for _ in cnt..(sum + 1) {
+                for _ in cnt..sum {
                     result.push(0);
                 }
             }
@@ -1043,7 +1043,7 @@ impl InitVal {
                         }
                     }
                 }
-                for _ in cnt..(sum + 1) {
+                for _ in cnt..sum {
                     result.push(ResultEnum::Lit(0));
                 }
             }
@@ -1091,7 +1091,7 @@ impl InitVal {
                         }
                     }
                 }
-                for _ in cnt..(sum + 1) {
+                for _ in cnt..sum {
                     result.push(0);
                 }
             }
