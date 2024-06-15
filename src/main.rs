@@ -7,6 +7,8 @@ use std::io::Result;
 mod asm;
 use asm::GenerateAsm;
 
+use koopa::ir::types;
+
 mod ast;
 
 lalrpop_mod!(sysy);
@@ -32,6 +34,7 @@ fn main() -> Result<()> {
     } else if mode == "-riscv" {
         println!("riscv");
         let driver = koopa::front::Driver::from(s);
+        types::Type::set_ptr_size(4);
         let program = driver.generate_program().unwrap();
         std::fs::write(output, program.generate(None, None, None, None))?;
     }
