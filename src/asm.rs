@@ -7,6 +7,8 @@ use koopa::ir::Program;
 use koopa::ir::ValueKind;
 use std::collections::HashMap;
 
+static mut CNT: i32 = 0;
+
 pub struct StackFrame {
     call: bool,
     size: i32,
@@ -677,8 +679,15 @@ impl GenerateAsm for Value {
                 }
                 let true_name = &func_data.unwrap().dfg().bb(branch.true_bb()).name().as_ref().unwrap()[1..];
                 let false_name = &func_data.unwrap().dfg().bb(branch.false_bb()).name().as_ref().unwrap()[1..];
-                s.push_str(&format!("  bnez t0, {}\n", true_name));
-                s.push_str(&format!("  j {}\n", false_name));
+
+                unsafe {
+                    let tmp_name = format!("long_jump_{}", CNT);
+                    CNT += 1;
+                    s.push_str(&format!("  bnez t0, {}\n", tmp_name));
+                    s.push_str(&format!("  j {}\n", false_name));
+                    s.push_str(&format!("\n{}:\n", tmp_name));
+                    s.push_str(&format!("  j {}\n", true_name));
+                }
                 s
             }
             ValueKind::Jump(jump) => {
