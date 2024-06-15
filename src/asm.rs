@@ -276,7 +276,7 @@ impl GenerateAsm for Value {
                     if frame.unwrap().call {
                         if frame.unwrap().size - 4 > 2047 {
                             s.push_str(&format!("  li t0, {}\n", frame.unwrap().size - 4));
-                            s.push_str(&format!("  add sp, sp, t0\n"));
+                            s.push_str(&format!("  add t0, sp, t0\n"));
                             s.push_str(&format!("  lw ra, 0(t0)\n"));
                         } else {
                             s.push_str(&format!("  lw ra, {}(sp)\n", frame.unwrap().size - 4));
@@ -476,9 +476,9 @@ impl GenerateAsm for Value {
                     _ => {
                         let loff = frame.unwrap().pos.get(&bin.lhs()).unwrap().0;
                         if loff > 2047 {
-                            s.push_str(&format!("  li t1, {}\n", loff));
-                            s.push_str(&format!("  add t1, sp, t1\n"));
-                            s.push_str(&format!("  lw t0, 0(t1)\n"));
+                            s.push_str(&format!("  li t0, {}\n", loff));
+                            s.push_str(&format!("  add t0, sp, t0\n"));
+                            s.push_str(&format!("  lw t0, 0(t0)\n"));
                         } else {
                             s.push_str(&format!("  lw t0, {}(sp)\n", loff));
                         }
@@ -499,9 +499,9 @@ impl GenerateAsm for Value {
                     _ => {
                         let roff = frame.unwrap().pos.get(&bin.rhs()).unwrap().0;
                         if roff > 2047 {
-                            s.push_str(&format!("  li t0, {}\n", roff));
-                            s.push_str(&format!("  add t0, sp, t0\n"));
-                            s.push_str(&format!("  lw t1, 0(t0)\n"));
+                            s.push_str(&format!("  li t1, {}\n", roff));
+                            s.push_str(&format!("  add t1, sp, t1\n"));
+                            s.push_str(&format!("  lw t1, 0(t1)\n"));
                         } else {
                             s.push_str(&format!("  lw t1, {}(sp)\n", roff));
                         }
