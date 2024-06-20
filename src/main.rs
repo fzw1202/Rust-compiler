@@ -37,6 +37,12 @@ fn main() -> Result<()> {
         types::Type::set_ptr_size(4);
         let program = driver.generate_program().unwrap();
         std::fs::write(output, program.generate(None, None, None, None))?;
+    } else if mode == "-perf" {
+        println!("perf");
+        let driver = koopa::front::Driver::from(s);
+        types::Type::set_ptr_size(4);
+        let program = driver.generate_program().unwrap();
+        std::fs::write(output, program.generate(None, None, None, None))?;
     }
     Ok(())
 }
